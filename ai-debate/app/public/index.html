@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2f5bd3">
+  <title>AI Debate</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/vendor/marked.js" defer></script>
+  <script src="/vendor/purify.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a href="#/new" class="brand" aria-label="Trang chủ AI Debate">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M4 4h10a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H9l-3 3v-3H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm6 11h4a4 4 0 0 0 4-4V8h2a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2v3l-3-3h-3a2 2 0 0 1-2-2Z"/></svg>
+      <span>AI Debate</span>
+    </a>
+    <nav class="nav" id="nav" hidden>
+      <a href="#/new" data-route="new">Phiên mới</a>
+      <a href="#/history" data-route="history">Lịch sử</a>
+      <a href="#/usage" data-route="usage">Chi phí</a>
+      <a href="#/help" data-route="help">Hướng dẫn</a>
+    </nav>
+  </header>
+  <div id="banner" class="banner" hidden></div>
+  <main id="view" class="container" tabindex="-1">
+    <p class="muted">Đang tải…</p>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <noscript>Ứng dụng cần bật JavaScript.</noscript>
+</body>
+</html>

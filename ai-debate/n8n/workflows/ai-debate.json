@@ -1,0 +1,740 @@
+{
+  "id": "aiDebateMainWf01",
+  "name": "AI Debate — GPT vs Claude, trọng tài Muse",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "781416d0-0cc3-558e-a905-e867dd24dd68",
+      "name": "Webhook: Nhận yêu cầu",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "9c620531-721c-5f53-ae2f-5c52aaa890df",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ai-debate",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "notes": "Ứng dụng web gọi vào đây (header x-internal-token).",
+      "notesInFlow": true
+    },
+    {
+      "id": "356b66e6-7c0a-52d8-a39f-2b3b7a029ad0",
+      "name": "Kiểm tra token",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "09102bfc-1076-52a4-aef5-e32d24260773",
+              "leftValue": "={{ !!$env.DEBATE_INTERNAL_TOKEN && $json.headers['x-internal-token'] === $env.DEBATE_INTERNAL_TOKEN }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "5fcaa859-0a5d-5416-ac95-ae9732e12ad9",
+      "name": "Bắt đầu phiên",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.APP_INTERNAL_URL }}/internal/sessions/{{ encodeURIComponent($json.body.sessionId) }}/start",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-internal-token",
+              "value": "={{ $env.DEBATE_INTERNAL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ executionId: $execution.id }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "68b6d744-0b13-5eca-a382-55f3517485ad",
+      "name": "Vòng 1: Soạn đề bài",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Sinh tự động từ n8n/src/code/r1_build.js — sửa file nguồn rồi chạy \"npm run build:workflow\".\n// ===== Thư viện dùng chung (được chèn vào đầu mỗi Code node khi build workflow) =====\nconst MAX_TEXT_CHARS = 24000; // giới hạn độ dài mỗi văn bản đưa vào prompt (kiểm soát chi phí)\n\nfunction clip(text, max = MAX_TEXT_CHARS) {\n  const t = String(text || '').trim();\n  return t.length > max ? t.slice(0, max) + '\\n\\n[…đã cắt bớt do quá dài…]' : t;\n}\n\nfunction problemBlock(input) {\n  let s = `### VẤN ĐỀ CẦN GIẢI QUYẾT\\n${clip(input.problem, 8000)}\\n`;\n  if (input.context) s += `\\n### BỐI CẢNH\\n${clip(input.context, 8000)}\\n`;\n  if (input.goals) s += `\\n### MỤC TIÊU\\n${clip(input.goals, 4000)}\\n`;\n  if (input.constraints) s += `\\n### RÀNG BUỘC\\n${clip(input.constraints, 4000)}\\n`;\n  s += `\\n### TIÊU CHÍ ĐÁNH GIÁ (trọng số)\\n`;\n  for (const c of input.criteria || []) s += `- ${c.name} (${c.weight})${c.description ? `: ${c.description}` : ''}\\n`;\n  return s;\n}\n\nfunction debaterSystem(side, label) {\n  return [\n    `Bạn là ${label}, đóng vai \"Bên ${side}\" trong một cuộc tranh luận có cấu trúc giữa hai AI nhằm tìm ra giải pháp tốt nhất cho một vấn đề thực tế.`,\n    'Quy tắc:',\n    '- Luôn viết bằng tiếng Việt chuẩn, rõ ràng, dùng Markdown (tiêu đề ##, gạch đầu dòng, bảng khi phù hợp).',\n    '- Lập luận dựa trên logic và bằng chứng; nêu rõ giả định. Không bịa số liệu, nguồn hay trích dẫn; nếu là ước tính, ghi rõ \"ước tính\".',\n    '- Thẳng thắn nhưng tôn trọng; công nhận điểm đúng của đối phương, chỉ ra điểm sai bằng lý lẽ cụ thể.',\n    '- Đề xuất phải khả thi, có bước hành động cụ thể, phù hợp ràng buộc người dùng đưa ra.',\n    '- Viết súc tích: tối đa khoảng 1.200 từ.',\n  ].join('\\n');\n}\n\nfunction llmRequest(state, { round, role, stage, system, prompt }) {\n  return { request: { sessionId: state.sessionId, round, role, stage, system, prompt } };\n}\n\n// Kiểm tra kết quả từ gateway; ném lỗi tiếng Việt để Error Workflow báo về ứng dụng.\nfunction assertOk(results, stageLabel) {\n  for (const r of results) {\n    if (!r || r.ok !== true) {\n      const msg = (r && r.error && (r.error.message || r.error)) || 'Không nhận được phản hồi từ gateway';\n      throw new Error(`${stageLabel}: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);\n    }\n  }\n  return results;\n}\n\nfunction byRole(results) {\n  const out = {};\n  for (const r of results) out[r.role] = r;\n  return out;\n}\n\nfunction callSummary(r) {\n  return { round: r.round, role: r.role, model: r.model, provider: r.provider, usage: r.usage, costUsd: r.costUsd, attempts: r.attempts, latencyMs: r.latencyMs };\n}\n\nconst OTHER = { A: 'B', B: 'A' };\n\n// Trích JSON từ văn bản trả về của trọng tài (chịu được ```json fences, chữ thừa, dấu phẩy cuối).\nfunction extractJson(text) {\n  if (!text) return null;\n  let s = String(text).trim();\n  const fence = s.match(/```(?:json)?\\s*([\\s\\S]*?)```/i);\n  if (fence) s = fence[1].trim();\n  const start = s.indexOf('{');\n  const end = s.lastIndexOf('}');\n  if (start < 0 || end <= start) return null;\n  s = s.slice(start, end + 1);\n  const attempts = [s, s.replace(/,\\s*([}\\]])/g, '$1')];\n  for (const a of attempts) {\n    try {\n      const v = JSON.parse(a);\n      if (v && typeof v === 'object') return v;\n    } catch (e) { /* thử cách khác */ }\n  }\n  return null;\n}\n\nfunction num(v) {\n  const n = Number(v);\n  return Number.isFinite(n) ? n : null;\n}\n\n// Chuẩn hóa phán quyết & tính điểm có trọng số (0–100) một cách xác định, không phụ thuộc LLM.\nfunction normalizeJudge(j, criteria) {\n  const problems = [];\n  if (!j || typeof j !== 'object') return { valid: false, problems: ['Không phải JSON object'] };\n  const scores = { A: [], B: [] };\n  for (const side of ['A', 'B']) {\n    const arr = (j.scores && Array.isArray(j.scores[side])) ? j.scores[side] : [];\n    for (const c of criteria) {\n      const found = arr.find((x) => x && String(x.criterion || '').trim().toLowerCase() === c.name.toLowerCase())\n        || arr[criteria.indexOf(c)];\n      let s = found ? num(found.score) : null;\n      if (s === null) problems.push(`Thiếu điểm \"${c.name}\" cho Bên ${side}`);\n      else s = Math.max(0, Math.min(10, s));\n      scores[side].push({ criterion: c.name, weight: c.weight, score: s, comment: found ? String(found.comment || '') : '' });\n    }\n  }\n  const totalWeight = criteria.reduce((a, c) => a + c.weight, 0) || 1;\n  const weighted = {};\n  for (const side of ['A', 'B']) {\n    weighted[side] = Math.round((scores[side].reduce((a, x) => a + (x.score || 0) * x.weight, 0) / totalWeight) * 10 * 10) / 10;\n  }\n  let decision = String(j.decision || '').toUpperCase().trim();\n  if (['COMBINE', 'KET_HOP', 'KẾT HỢP', 'HYBRID'].includes(decision)) decision = 'COMBINE';\n  if (!['A', 'B', 'COMBINE'].includes(decision)) { problems.push('decision phải là A, B hoặc COMBINE'); decision = null; }\n  const arr = (v) => (Array.isArray(v) ? v : []);\n  const out = {\n    summary: String(j.summary || ''),\n    scores, weighted,\n    decision,\n    decisionRationale: String(j.decisionRationale || ''),\n    finalSolution: String(j.finalSolution || ''),\n    comparison: arr(j.comparison),\n    strengths: { A: arr(j.strengths && j.strengths.A), B: arr(j.strengths && j.strengths.B) },\n    weaknesses: { A: arr(j.weaknesses && j.weaknesses.A), B: arr(j.weaknesses && j.weaknesses.B) },\n    unresolvedDisagreements: arr(j.unresolvedDisagreements),\n    risks: arr(j.risks),\n    actionPlan: arr(j.actionPlan),\n    confidence: num(j.confidence),\n  };\n  if (!out.summary) problems.push('Thiếu summary');\n  if (!out.finalSolution) problems.push('Thiếu finalSolution');\n  return { valid: problems.length === 0 && decision !== null, problems, judge: out };\n}\n\nconst JUDGE_SCHEMA_HINT = `{\n  \"summary\": \"Tóm tắt 3-5 câu về cuộc tranh luận và kết luận\",\n  \"scores\": {\n    \"A\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ],\n    \"B\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ]\n  },\n  \"decision\": \"A\" | \"B\" | \"COMBINE\",\n  \"decisionRationale\": \"Vì sao chọn/kết hợp như vậy\",\n  \"finalSolution\": \"Giải pháp cuối cùng được khuyến nghị (Markdown, chi tiết, có các bước)\",\n  \"comparison\": [ { \"aspect\": \"Khía cạnh so sánh\", \"A\": \"…\", \"B\": \"…\", \"better\": \"A|B|Ngang nhau\" } ],\n  \"strengths\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"weaknesses\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"unresolvedDisagreements\": [ { \"issue\": \"…\", \"positionA\": \"…\", \"positionB\": \"…\", \"judgeView\": \"…\", \"howToResolve\": \"Cần dữ liệu/thử nghiệm gì để phân xử\" } ],\n  \"risks\": [ { \"risk\": \"…\", \"severity\": \"Cao|Trung bình|Thấp\", \"likelihood\": \"Cao|Trung bình|Thấp\", \"mitigation\": \"…\" } ],\n  \"actionPlan\": [ { \"step\": 1, \"action\": \"…\", \"owner\": \"…\", \"timeline\": \"…\", \"kpi\": \"…\" } ],\n  \"confidence\": 0-100\n}`;\n\nfunction mdCell(v) {\n  return String(v === undefined || v === null ? '' : v).replace(/\\|/g, '\\\\|').replace(/\\r?\\n+/g, '<br>');\n}\n// ===== Hết thư viện =====\n\n// ===== r1_build.js =====\n// Vòng 1: mỗi AI phân tích ĐỘC LẬP (không thấy kết quả của nhau). Tạo 2 item -> node HTTP gọi song song.\nconst s = $('Bắt đầu phiên').first().json;\nif (s.cancelled) throw new Error('Phiên đã bị hủy trước khi bắt đầu');\nconst state = { sessionId: s.id, title: s.title, input: s.input, participants: s.participants, rounds: {}, calls: [] };\n\nconst task = `---\n## NHIỆM VỤ — VÒNG 1: PHÂN TÍCH ĐỘC LẬP\nHãy tự phân tích vấn đề trên và đề xuất phương án tốt nhất của bạn. Trình bày theo đúng cấu trúc:\n## 1. Tóm tắt phương án (3–5 câu)\n## 2. Phân tích vấn đề & nguyên nhân gốc\n## 3. Giải pháp đề xuất (các bước cụ thể, theo thứ tự ưu tiên)\n## 4. Lập luận & bằng chứng\n## 5. Giả định chính\n## 6. Rủi ro & cách giảm thiểu\n## 7. Chi phí / nguồn lực ước tính\n## 8. Chỉ số đo lường thành công (KPI)`;\n\nreturn ['A', 'B'].map((side) => ({\n  json: {\n    state,\n    ...llmRequest(state, {\n      round: 1, role: side, stage: 'analysis',\n      system: debaterSystem(side, state.participants[side].label),\n      prompt: `${problemBlock(state.input)}\\n${task}`,\n    }),\n  },\n}));\n"
+      }
+    },
+    {
+      "id": "45f9d23e-a084-5e59-ad34-687f4ed7ee11",
+      "name": "Vòng 1: GPT & Claude phân tích",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.APP_INTERNAL_URL }}/internal/llm",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-internal-token",
+              "value": "={{ $env.DEBATE_INTERNAL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request) }}",
+        "options": {
+          "timeout": 1500000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Gọi song song GPT-6 Sol (A) & Claude Opus 5.5 (B)",
+      "notesInFlow": true
+    },
+    {
+      "id": "dfd950cf-7c5b-5c95-a892-c9118e2e21ef",
+      "name": "Vòng 1: Kiểm tra kết quả",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Sinh tự động từ n8n/src/code/r1_collect.js — sửa file nguồn rồi chạy \"npm run build:workflow\".\n// ===== Thư viện dùng chung (được chèn vào đầu mỗi Code node khi build workflow) =====\nconst MAX_TEXT_CHARS = 24000; // giới hạn độ dài mỗi văn bản đưa vào prompt (kiểm soát chi phí)\n\nfunction clip(text, max = MAX_TEXT_CHARS) {\n  const t = String(text || '').trim();\n  return t.length > max ? t.slice(0, max) + '\\n\\n[…đã cắt bớt do quá dài…]' : t;\n}\n\nfunction problemBlock(input) {\n  let s = `### VẤN ĐỀ CẦN GIẢI QUYẾT\\n${clip(input.problem, 8000)}\\n`;\n  if (input.context) s += `\\n### BỐI CẢNH\\n${clip(input.context, 8000)}\\n`;\n  if (input.goals) s += `\\n### MỤC TIÊU\\n${clip(input.goals, 4000)}\\n`;\n  if (input.constraints) s += `\\n### RÀNG BUỘC\\n${clip(input.constraints, 4000)}\\n`;\n  s += `\\n### TIÊU CHÍ ĐÁNH GIÁ (trọng số)\\n`;\n  for (const c of input.criteria || []) s += `- ${c.name} (${c.weight})${c.description ? `: ${c.description}` : ''}\\n`;\n  return s;\n}\n\nfunction debaterSystem(side, label) {\n  return [\n    `Bạn là ${label}, đóng vai \"Bên ${side}\" trong một cuộc tranh luận có cấu trúc giữa hai AI nhằm tìm ra giải pháp tốt nhất cho một vấn đề thực tế.`,\n    'Quy tắc:',\n    '- Luôn viết bằng tiếng Việt chuẩn, rõ ràng, dùng Markdown (tiêu đề ##, gạch đầu dòng, bảng khi phù hợp).',\n    '- Lập luận dựa trên logic và bằng chứng; nêu rõ giả định. Không bịa số liệu, nguồn hay trích dẫn; nếu là ước tính, ghi rõ \"ước tính\".',\n    '- Thẳng thắn nhưng tôn trọng; công nhận điểm đúng của đối phương, chỉ ra điểm sai bằng lý lẽ cụ thể.',\n    '- Đề xuất phải khả thi, có bước hành động cụ thể, phù hợp ràng buộc người dùng đưa ra.',\n    '- Viết súc tích: tối đa khoảng 1.200 từ.',\n  ].join('\\n');\n}\n\nfunction llmRequest(state, { round, role, stage, system, prompt }) {\n  return { request: { sessionId: state.sessionId, round, role, stage, system, prompt } };\n}\n\n// Kiểm tra kết quả từ gateway; ném lỗi tiếng Việt để Error Workflow báo về ứng dụng.\nfunction assertOk(results, stageLabel) {\n  for (const r of results) {\n    if (!r || r.ok !== true) {\n      const msg = (r && r.error && (r.error.message || r.error)) || 'Không nhận được phản hồi từ gateway';\n      throw new Error(`${stageLabel}: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);\n    }\n  }\n  return results;\n}\n\nfunction byRole(results) {\n  const out = {};\n  for (const r of results) out[r.role] = r;\n  return out;\n}\n\nfunction callSummary(r) {\n  return { round: r.round, role: r.role, model: r.model, provider: r.provider, usage: r.usage, costUsd: r.costUsd, attempts: r.attempts, latencyMs: r.latencyMs };\n}\n\nconst OTHER = { A: 'B', B: 'A' };\n\n// Trích JSON từ văn bản trả về của trọng tài (chịu được ```json fences, chữ thừa, dấu phẩy cuối).\nfunction extractJson(text) {\n  if (!text) return null;\n  let s = String(text).trim();\n  const fence = s.match(/```(?:json)?\\s*([\\s\\S]*?)```/i);\n  if (fence) s = fence[1].trim();\n  const start = s.indexOf('{');\n  const end = s.lastIndexOf('}');\n  if (start < 0 || end <= start) return null;\n  s = s.slice(start, end + 1);\n  const attempts = [s, s.replace(/,\\s*([}\\]])/g, '$1')];\n  for (const a of attempts) {\n    try {\n      const v = JSON.parse(a);\n      if (v && typeof v === 'object') return v;\n    } catch (e) { /* thử cách khác */ }\n  }\n  return null;\n}\n\nfunction num(v) {\n  const n = Number(v);\n  return Number.isFinite(n) ? n : null;\n}\n\n// Chuẩn hóa phán quyết & tính điểm có trọng số (0–100) một cách xác định, không phụ thuộc LLM.\nfunction normalizeJudge(j, criteria) {\n  const problems = [];\n  if (!j || typeof j !== 'object') return { valid: false, problems: ['Không phải JSON object'] };\n  const scores = { A: [], B: [] };\n  for (const side of ['A', 'B']) {\n    const arr = (j.scores && Array.isArray(j.scores[side])) ? j.scores[side] : [];\n    for (const c of criteria) {\n      const found = arr.find((x) => x && String(x.criterion || '').trim().toLowerCase() === c.name.toLowerCase())\n        || arr[criteria.indexOf(c)];\n      let s = found ? num(found.score) : null;\n      if (s === null) problems.push(`Thiếu điểm \"${c.name}\" cho Bên ${side}`);\n      else s = Math.max(0, Math.min(10, s));\n      scores[side].push({ criterion: c.name, weight: c.weight, score: s, comment: found ? String(found.comment || '') : '' });\n    }\n  }\n  const totalWeight = criteria.reduce((a, c) => a + c.weight, 0) || 1;\n  const weighted = {};\n  for (const side of ['A', 'B']) {\n    weighted[side] = Math.round((scores[side].reduce((a, x) => a + (x.score || 0) * x.weight, 0) / totalWeight) * 10 * 10) / 10;\n  }\n  let decision = String(j.decision || '').toUpperCase().trim();\n  if (['COMBINE', 'KET_HOP', 'KẾT HỢP', 'HYBRID'].includes(decision)) decision = 'COMBINE';\n  if (!['A', 'B', 'COMBINE'].includes(decision)) { problems.push('decision phải là A, B hoặc COMBINE'); decision = null; }\n  const arr = (v) => (Array.isArray(v) ? v : []);\n  const out = {\n    summary: String(j.summary || ''),\n    scores, weighted,\n    decision,\n    decisionRationale: String(j.decisionRationale || ''),\n    finalSolution: String(j.finalSolution || ''),\n    comparison: arr(j.comparison),\n    strengths: { A: arr(j.strengths && j.strengths.A), B: arr(j.strengths && j.strengths.B) },\n    weaknesses: { A: arr(j.weaknesses && j.weaknesses.A), B: arr(j.weaknesses && j.weaknesses.B) },\n    unresolvedDisagreements: arr(j.unresolvedDisagreements),\n    risks: arr(j.risks),\n    actionPlan: arr(j.actionPlan),\n    confidence: num(j.confidence),\n  };\n  if (!out.summary) problems.push('Thiếu summary');\n  if (!out.finalSolution) problems.push('Thiếu finalSolution');\n  return { valid: problems.length === 0 && decision !== null, problems, judge: out };\n}\n\nconst JUDGE_SCHEMA_HINT = `{\n  \"summary\": \"Tóm tắt 3-5 câu về cuộc tranh luận và kết luận\",\n  \"scores\": {\n    \"A\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ],\n    \"B\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ]\n  },\n  \"decision\": \"A\" | \"B\" | \"COMBINE\",\n  \"decisionRationale\": \"Vì sao chọn/kết hợp như vậy\",\n  \"finalSolution\": \"Giải pháp cuối cùng được khuyến nghị (Markdown, chi tiết, có các bước)\",\n  \"comparison\": [ { \"aspect\": \"Khía cạnh so sánh\", \"A\": \"…\", \"B\": \"…\", \"better\": \"A|B|Ngang nhau\" } ],\n  \"strengths\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"weaknesses\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"unresolvedDisagreements\": [ { \"issue\": \"…\", \"positionA\": \"…\", \"positionB\": \"…\", \"judgeView\": \"…\", \"howToResolve\": \"Cần dữ liệu/thử nghiệm gì để phân xử\" } ],\n  \"risks\": [ { \"risk\": \"…\", \"severity\": \"Cao|Trung bình|Thấp\", \"likelihood\": \"Cao|Trung bình|Thấp\", \"mitigation\": \"…\" } ],\n  \"actionPlan\": [ { \"step\": 1, \"action\": \"…\", \"owner\": \"…\", \"timeline\": \"…\", \"kpi\": \"…\" } ],\n  \"confidence\": 0-100\n}`;\n\nfunction mdCell(v) {\n  return String(v === undefined || v === null ? '' : v).replace(/\\|/g, '\\\\|').replace(/\\r?\\n+/g, '<br>');\n}\n// ===== Hết thư viện =====\n\n// ===== r1_collect.js =====\nconst state = JSON.parse(JSON.stringify($('Vòng 1: Soạn đề bài').first().json.state));\nconst res = byRole(assertOk($input.all().map((i) => i.json), 'Vòng 1'));\nif (!res.A || !res.B) throw new Error('Vòng 1: thiếu kết quả của một bên');\nstate.rounds['1'] = { A: res.A.text, B: res.B.text };\nstate.calls.push(callSummary(res.A), callSummary(res.B));\nreturn [{ json: { state } }];\n"
+      }
+    },
+    {
+      "id": "4befb09b-d34d-5613-a624-cf699a0bba3d",
+      "name": "Vòng 2: Soạn đề bài phản biện",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Sinh tự động từ n8n/src/code/r2_build.js — sửa file nguồn rồi chạy \"npm run build:workflow\".\n// ===== Thư viện dùng chung (được chèn vào đầu mỗi Code node khi build workflow) =====\nconst MAX_TEXT_CHARS = 24000; // giới hạn độ dài mỗi văn bản đưa vào prompt (kiểm soát chi phí)\n\nfunction clip(text, max = MAX_TEXT_CHARS) {\n  const t = String(text || '').trim();\n  return t.length > max ? t.slice(0, max) + '\\n\\n[…đã cắt bớt do quá dài…]' : t;\n}\n\nfunction problemBlock(input) {\n  let s = `### VẤN ĐỀ CẦN GIẢI QUYẾT\\n${clip(input.problem, 8000)}\\n`;\n  if (input.context) s += `\\n### BỐI CẢNH\\n${clip(input.context, 8000)}\\n`;\n  if (input.goals) s += `\\n### MỤC TIÊU\\n${clip(input.goals, 4000)}\\n`;\n  if (input.constraints) s += `\\n### RÀNG BUỘC\\n${clip(input.constraints, 4000)}\\n`;\n  s += `\\n### TIÊU CHÍ ĐÁNH GIÁ (trọng số)\\n`;\n  for (const c of input.criteria || []) s += `- ${c.name} (${c.weight})${c.description ? `: ${c.description}` : ''}\\n`;\n  return s;\n}\n\nfunction debaterSystem(side, label) {\n  return [\n    `Bạn là ${label}, đóng vai \"Bên ${side}\" trong một cuộc tranh luận có cấu trúc giữa hai AI nhằm tìm ra giải pháp tốt nhất cho một vấn đề thực tế.`,\n    'Quy tắc:',\n    '- Luôn viết bằng tiếng Việt chuẩn, rõ ràng, dùng Markdown (tiêu đề ##, gạch đầu dòng, bảng khi phù hợp).',\n    '- Lập luận dựa trên logic và bằng chứng; nêu rõ giả định. Không bịa số liệu, nguồn hay trích dẫn; nếu là ước tính, ghi rõ \"ước tính\".',\n    '- Thẳng thắn nhưng tôn trọng; công nhận điểm đúng của đối phương, chỉ ra điểm sai bằng lý lẽ cụ thể.',\n    '- Đề xuất phải khả thi, có bước hành động cụ thể, phù hợp ràng buộc người dùng đưa ra.',\n    '- Viết súc tích: tối đa khoảng 1.200 từ.',\n  ].join('\\n');\n}\n\nfunction llmRequest(state, { round, role, stage, system, prompt }) {\n  return { request: { sessionId: state.sessionId, round, role, stage, system, prompt } };\n}\n\n// Kiểm tra kết quả từ gateway; ném lỗi tiếng Việt để Error Workflow báo về ứng dụng.\nfunction assertOk(results, stageLabel) {\n  for (const r of results) {\n    if (!r || r.ok !== true) {\n      const msg = (r && r.error && (r.error.message || r.error)) || 'Không nhận được phản hồi từ gateway';\n      throw new Error(`${stageLabel}: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);\n    }\n  }\n  return results;\n}\n\nfunction byRole(results) {\n  const out = {};\n  for (const r of results) out[r.role] = r;\n  return out;\n}\n\nfunction callSummary(r) {\n  return { round: r.round, role: r.role, model: r.model, provider: r.provider, usage: r.usage, costUsd: r.costUsd, attempts: r.attempts, latencyMs: r.latencyMs };\n}\n\nconst OTHER = { A: 'B', B: 'A' };\n\n// Trích JSON từ văn bản trả về của trọng tài (chịu được ```json fences, chữ thừa, dấu phẩy cuối).\nfunction extractJson(text) {\n  if (!text) return null;\n  let s = String(text).trim();\n  const fence = s.match(/```(?:json)?\\s*([\\s\\S]*?)```/i);\n  if (fence) s = fence[1].trim();\n  const start = s.indexOf('{');\n  const end = s.lastIndexOf('}');\n  if (start < 0 || end <= start) return null;\n  s = s.slice(start, end + 1);\n  const attempts = [s, s.replace(/,\\s*([}\\]])/g, '$1')];\n  for (const a of attempts) {\n    try {\n      const v = JSON.parse(a);\n      if (v && typeof v === 'object') return v;\n    } catch (e) { /* thử cách khác */ }\n  }\n  return null;\n}\n\nfunction num(v) {\n  const n = Number(v);\n  return Number.isFinite(n) ? n : null;\n}\n\n// Chuẩn hóa phán quyết & tính điểm có trọng số (0–100) một cách xác định, không phụ thuộc LLM.\nfunction normalizeJudge(j, criteria) {\n  const problems = [];\n  if (!j || typeof j !== 'object') return { valid: false, problems: ['Không phải JSON object'] };\n  const scores = { A: [], B: [] };\n  for (const side of ['A', 'B']) {\n    const arr = (j.scores && Array.isArray(j.scores[side])) ? j.scores[side] : [];\n    for (const c of criteria) {\n      const found = arr.find((x) => x && String(x.criterion || '').trim().toLowerCase() === c.name.toLowerCase())\n        || arr[criteria.indexOf(c)];\n      let s = found ? num(found.score) : null;\n      if (s === null) problems.push(`Thiếu điểm \"${c.name}\" cho Bên ${side}`);\n      else s = Math.max(0, Math.min(10, s));\n      scores[side].push({ criterion: c.name, weight: c.weight, score: s, comment: found ? String(found.comment || '') : '' });\n    }\n  }\n  const totalWeight = criteria.reduce((a, c) => a + c.weight, 0) || 1;\n  const weighted = {};\n  for (const side of ['A', 'B']) {\n    weighted[side] = Math.round((scores[side].reduce((a, x) => a + (x.score || 0) * x.weight, 0) / totalWeight) * 10 * 10) / 10;\n  }\n  let decision = String(j.decision || '').toUpperCase().trim();\n  if (['COMBINE', 'KET_HOP', 'KẾT HỢP', 'HYBRID'].includes(decision)) decision = 'COMBINE';\n  if (!['A', 'B', 'COMBINE'].includes(decision)) { problems.push('decision phải là A, B hoặc COMBINE'); decision = null; }\n  const arr = (v) => (Array.isArray(v) ? v : []);\n  const out = {\n    summary: String(j.summary || ''),\n    scores, weighted,\n    decision,\n    decisionRationale: String(j.decisionRationale || ''),\n    finalSolution: String(j.finalSolution || ''),\n    comparison: arr(j.comparison),\n    strengths: { A: arr(j.strengths && j.strengths.A), B: arr(j.strengths && j.strengths.B) },\n    weaknesses: { A: arr(j.weaknesses && j.weaknesses.A), B: arr(j.weaknesses && j.weaknesses.B) },\n    unresolvedDisagreements: arr(j.unresolvedDisagreements),\n    risks: arr(j.risks),\n    actionPlan: arr(j.actionPlan),\n    confidence: num(j.confidence),\n  };\n  if (!out.summary) problems.push('Thiếu summary');\n  if (!out.finalSolution) problems.push('Thiếu finalSolution');\n  return { valid: problems.length === 0 && decision !== null, problems, judge: out };\n}\n\nconst JUDGE_SCHEMA_HINT = `{\n  \"summary\": \"Tóm tắt 3-5 câu về cuộc tranh luận và kết luận\",\n  \"scores\": {\n    \"A\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ],\n    \"B\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ]\n  },\n  \"decision\": \"A\" | \"B\" | \"COMBINE\",\n  \"decisionRationale\": \"Vì sao chọn/kết hợp như vậy\",\n  \"finalSolution\": \"Giải pháp cuối cùng được khuyến nghị (Markdown, chi tiết, có các bước)\",\n  \"comparison\": [ { \"aspect\": \"Khía cạnh so sánh\", \"A\": \"…\", \"B\": \"…\", \"better\": \"A|B|Ngang nhau\" } ],\n  \"strengths\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"weaknesses\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"unresolvedDisagreements\": [ { \"issue\": \"…\", \"positionA\": \"…\", \"positionB\": \"…\", \"judgeView\": \"…\", \"howToResolve\": \"Cần dữ liệu/thử nghiệm gì để phân xử\" } ],\n  \"risks\": [ { \"risk\": \"…\", \"severity\": \"Cao|Trung bình|Thấp\", \"likelihood\": \"Cao|Trung bình|Thấp\", \"mitigation\": \"…\" } ],\n  \"actionPlan\": [ { \"step\": 1, \"action\": \"…\", \"owner\": \"…\", \"timeline\": \"…\", \"kpi\": \"…\" } ],\n  \"confidence\": 0-100\n}`;\n\nfunction mdCell(v) {\n  return String(v === undefined || v === null ? '' : v).replace(/\\|/g, '\\\\|').replace(/\\r?\\n+/g, '<br>');\n}\n// ===== Hết thư viện =====\n\n// ===== r2_build.js =====\n// Vòng 2: mỗi AI đọc phương án của đối phương và phản biện chi tiết.\nconst state = $input.first().json.state;\nreturn ['A', 'B'].map((side) => {\n  const other = OTHER[side];\n  const prompt = `${problemBlock(state.input)}\n---\n## PHƯƠNG ÁN VÒNG 1 CỦA BẠN (Bên ${side})\n${clip(state.rounds['1'][side])}\n\n---\n## PHƯƠNG ÁN VÒNG 1 CỦA ĐỐI PHƯƠNG (Bên ${other})\n${clip(state.rounds['1'][other])}\n\n---\n## NHIỆM VỤ — VÒNG 2: PHẢN BIỆN CHI TIẾT\nHãy phản biện phương án của Bên ${other} một cách công bằng và sắc bén. Trình bày theo cấu trúc:\n## 1. Điểm mạnh của phương án đối phương (công nhận trung thực)\n## 2. Điểm yếu, lỗ hổng lập luận, giả định sai hoặc thiếu căn cứ\n## 3. Rủi ro đối phương bỏ sót hoặc đánh giá thấp\n## 4. Câu hỏi chất vấn (đánh số)\n## 5. Những điểm hai bên đồng thuận\n## 6. Điều bạn rút ra và dự định điều chỉnh trong phương án của mình`;\n  return { json: { state, ...llmRequest(state, { round: 2, role: side, stage: 'critique', system: debaterSystem(side, state.participants[side].label), prompt }) } };\n});\n"
+      }
+    },
+    {
+      "id": "232cba85-8aeb-5618-a911-7db983c095fa",
+      "name": "Vòng 2: GPT & Claude phản biện",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.APP_INTERNAL_URL }}/internal/llm",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-internal-token",
+              "value": "={{ $env.DEBATE_INTERNAL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request) }}",
+        "options": {
+          "timeout": 1500000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Mỗi bên phản biện phương án đối phương",
+      "notesInFlow": true
+    },
+    {
+      "id": "06eb8f5f-7f1c-5285-ab91-a2f2b68e0026",
+      "name": "Vòng 2: Kiểm tra kết quả",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Sinh tự động từ n8n/src/code/r2_collect.js — sửa file nguồn rồi chạy \"npm run build:workflow\".\n// ===== Thư viện dùng chung (được chèn vào đầu mỗi Code node khi build workflow) =====\nconst MAX_TEXT_CHARS = 24000; // giới hạn độ dài mỗi văn bản đưa vào prompt (kiểm soát chi phí)\n\nfunction clip(text, max = MAX_TEXT_CHARS) {\n  const t = String(text || '').trim();\n  return t.length > max ? t.slice(0, max) + '\\n\\n[…đã cắt bớt do quá dài…]' : t;\n}\n\nfunction problemBlock(input) {\n  let s = `### VẤN ĐỀ CẦN GIẢI QUYẾT\\n${clip(input.problem, 8000)}\\n`;\n  if (input.context) s += `\\n### BỐI CẢNH\\n${clip(input.context, 8000)}\\n`;\n  if (input.goals) s += `\\n### MỤC TIÊU\\n${clip(input.goals, 4000)}\\n`;\n  if (input.constraints) s += `\\n### RÀNG BUỘC\\n${clip(input.constraints, 4000)}\\n`;\n  s += `\\n### TIÊU CHÍ ĐÁNH GIÁ (trọng số)\\n`;\n  for (const c of input.criteria || []) s += `- ${c.name} (${c.weight})${c.description ? `: ${c.description}` : ''}\\n`;\n  return s;\n}\n\nfunction debaterSystem(side, label) {\n  return [\n    `Bạn là ${label}, đóng vai \"Bên ${side}\" trong một cuộc tranh luận có cấu trúc giữa hai AI nhằm tìm ra giải pháp tốt nhất cho một vấn đề thực tế.`,\n    'Quy tắc:',\n    '- Luôn viết bằng tiếng Việt chuẩn, rõ ràng, dùng Markdown (tiêu đề ##, gạch đầu dòng, bảng khi phù hợp).',\n    '- Lập luận dựa trên logic và bằng chứng; nêu rõ giả định. Không bịa số liệu, nguồn hay trích dẫn; nếu là ước tính, ghi rõ \"ước tính\".',\n    '- Thẳng thắn nhưng tôn trọng; công nhận điểm đúng của đối phương, chỉ ra điểm sai bằng lý lẽ cụ thể.',\n    '- Đề xuất phải khả thi, có bước hành động cụ thể, phù hợp ràng buộc người dùng đưa ra.',\n    '- Viết súc tích: tối đa khoảng 1.200 từ.',\n  ].join('\\n');\n}\n\nfunction llmRequest(state, { round, role, stage, system, prompt }) {\n  return { request: { sessionId: state.sessionId, round, role, stage, system, prompt } };\n}\n\n// Kiểm tra kết quả từ gateway; ném lỗi tiếng Việt để Error Workflow báo về ứng dụng.\nfunction assertOk(results, stageLabel) {\n  for (const r of results) {\n    if (!r || r.ok !== true) {\n      const msg = (r && r.error && (r.error.message || r.error)) || 'Không nhận được phản hồi từ gateway';\n      throw new Error(`${stageLabel}: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);\n    }\n  }\n  return results;\n}\n\nfunction byRole(results) {\n  const out = {};\n  for (const r of results) out[r.role] = r;\n  return out;\n}\n\nfunction callSummary(r) {\n  return { round: r.round, role: r.role, model: r.model, provider: r.provider, usage: r.usage, costUsd: r.costUsd, attempts: r.attempts, latencyMs: r.latencyMs };\n}\n\nconst OTHER = { A: 'B', B: 'A' };\n\n// Trích JSON từ văn bản trả về của trọng tài (chịu được ```json fences, chữ thừa, dấu phẩy cuối).\nfunction extractJson(text) {\n  if (!text) return null;\n  let s = String(text).trim();\n  const fence = s.match(/```(?:json)?\\s*([\\s\\S]*?)```/i);\n  if (fence) s = fence[1].trim();\n  const start = s.indexOf('{');\n  const end = s.lastIndexOf('}');\n  if (start < 0 || end <= start) return null;\n  s = s.slice(start, end + 1);\n  const attempts = [s, s.replace(/,\\s*([}\\]])/g, '$1')];\n  for (const a of attempts) {\n    try {\n      const v = JSON.parse(a);\n      if (v && typeof v === 'object') return v;\n    } catch (e) { /* thử cách khác */ }\n  }\n  return null;\n}\n\nfunction num(v) {\n  const n = Number(v);\n  return Number.isFinite(n) ? n : null;\n}\n\n// Chuẩn hóa phán quyết & tính điểm có trọng số (0–100) một cách xác định, không phụ thuộc LLM.\nfunction normalizeJudge(j, criteria) {\n  const problems = [];\n  if (!j || typeof j !== 'object') return { valid: false, problems: ['Không phải JSON object'] };\n  const scores = { A: [], B: [] };\n  for (const side of ['A', 'B']) {\n    const arr = (j.scores && Array.isArray(j.scores[side])) ? j.scores[side] : [];\n    for (const c of criteria) {\n      const found = arr.find((x) => x && String(x.criterion || '').trim().toLowerCase() === c.name.toLowerCase())\n        || arr[criteria.indexOf(c)];\n      let s = found ? num(found.score) : null;\n      if (s === null) problems.push(`Thiếu điểm \"${c.name}\" cho Bên ${side}`);\n      else s = Math.max(0, Math.min(10, s));\n      scores[side].push({ criterion: c.name, weight: c.weight, score: s, comment: found ? String(found.comment || '') : '' });\n    }\n  }\n  const totalWeight = criteria.reduce((a, c) => a + c.weight, 0) || 1;\n  const weighted = {};\n  for (const side of ['A', 'B']) {\n    weighted[side] = Math.round((scores[side].reduce((a, x) => a + (x.score || 0) * x.weight, 0) / totalWeight) * 10 * 10) / 10;\n  }\n  let decision = String(j.decision || '').toUpperCase().trim();\n  if (['COMBINE', 'KET_HOP', 'KẾT HỢP', 'HYBRID'].includes(decision)) decision = 'COMBINE';\n  if (!['A', 'B', 'COMBINE'].includes(decision)) { problems.push('decision phải là A, B hoặc COMBINE'); decision = null; }\n  const arr = (v) => (Array.isArray(v) ? v : []);\n  const out = {\n    summary: String(j.summary || ''),\n    scores, weighted,\n    decision,\n    decisionRationale: String(j.decisionRationale || ''),\n    finalSolution: String(j.finalSolution || ''),\n    comparison: arr(j.comparison),\n    strengths: { A: arr(j.strengths && j.strengths.A), B: arr(j.strengths && j.strengths.B) },\n    weaknesses: { A: arr(j.weaknesses && j.weaknesses.A), B: arr(j.weaknesses && j.weaknesses.B) },\n    unresolvedDisagreements: arr(j.unresolvedDisagreements),\n    risks: arr(j.risks),\n    actionPlan: arr(j.actionPlan),\n    confidence: num(j.confidence),\n  };\n  if (!out.summary) problems.push('Thiếu summary');\n  if (!out.finalSolution) problems.push('Thiếu finalSolution');\n  return { valid: problems.length === 0 && decision !== null, problems, judge: out };\n}\n\nconst JUDGE_SCHEMA_HINT = `{\n  \"summary\": \"Tóm tắt 3-5 câu về cuộc tranh luận và kết luận\",\n  \"scores\": {\n    \"A\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ],\n    \"B\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ]\n  },\n  \"decision\": \"A\" | \"B\" | \"COMBINE\",\n  \"decisionRationale\": \"Vì sao chọn/kết hợp như vậy\",\n  \"finalSolution\": \"Giải pháp cuối cùng được khuyến nghị (Markdown, chi tiết, có các bước)\",\n  \"comparison\": [ { \"aspect\": \"Khía cạnh so sánh\", \"A\": \"…\", \"B\": \"…\", \"better\": \"A|B|Ngang nhau\" } ],\n  \"strengths\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"weaknesses\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"unresolvedDisagreements\": [ { \"issue\": \"…\", \"positionA\": \"…\", \"positionB\": \"…\", \"judgeView\": \"…\", \"howToResolve\": \"Cần dữ liệu/thử nghiệm gì để phân xử\" } ],\n  \"risks\": [ { \"risk\": \"…\", \"severity\": \"Cao|Trung bình|Thấp\", \"likelihood\": \"Cao|Trung bình|Thấp\", \"mitigation\": \"…\" } ],\n  \"actionPlan\": [ { \"step\": 1, \"action\": \"…\", \"owner\": \"…\", \"timeline\": \"…\", \"kpi\": \"…\" } ],\n  \"confidence\": 0-100\n}`;\n\nfunction mdCell(v) {\n  return String(v === undefined || v === null ? '' : v).replace(/\\|/g, '\\\\|').replace(/\\r?\\n+/g, '<br>');\n}\n// ===== Hết thư viện =====\n\n// ===== r2_collect.js =====\nconst state = JSON.parse(JSON.stringify($('Vòng 2: Soạn đề bài phản biện').first().json.state));\nconst res = byRole(assertOk($input.all().map((i) => i.json), 'Vòng 2'));\nif (!res.A || !res.B) throw new Error('Vòng 2: thiếu kết quả của một bên');\nstate.rounds['2'] = { A: res.A.text, B: res.B.text };\nstate.calls.push(callSummary(res.A), callSummary(res.B));\nreturn [{ json: { state } }];\n"
+      }
+    },
+    {
+      "id": "c6b4c3ce-acd2-5f06-a533-1c4c39391db0",
+      "name": "Vòng 3: Soạn đề bài hoàn thiện",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Sinh tự động từ n8n/src/code/r3_build.js — sửa file nguồn rồi chạy \"npm run build:workflow\".\n// ===== Thư viện dùng chung (được chèn vào đầu mỗi Code node khi build workflow) =====\nconst MAX_TEXT_CHARS = 24000; // giới hạn độ dài mỗi văn bản đưa vào prompt (kiểm soát chi phí)\n\nfunction clip(text, max = MAX_TEXT_CHARS) {\n  const t = String(text || '').trim();\n  return t.length > max ? t.slice(0, max) + '\\n\\n[…đã cắt bớt do quá dài…]' : t;\n}\n\nfunction problemBlock(input) {\n  let s = `### VẤN ĐỀ CẦN GIẢI QUYẾT\\n${clip(input.problem, 8000)}\\n`;\n  if (input.context) s += `\\n### BỐI CẢNH\\n${clip(input.context, 8000)}\\n`;\n  if (input.goals) s += `\\n### MỤC TIÊU\\n${clip(input.goals, 4000)}\\n`;\n  if (input.constraints) s += `\\n### RÀNG BUỘC\\n${clip(input.constraints, 4000)}\\n`;\n  s += `\\n### TIÊU CHÍ ĐÁNH GIÁ (trọng số)\\n`;\n  for (const c of input.criteria || []) s += `- ${c.name} (${c.weight})${c.description ? `: ${c.description}` : ''}\\n`;\n  return s;\n}\n\nfunction debaterSystem(side, label) {\n  return [\n    `Bạn là ${label}, đóng vai \"Bên ${side}\" trong một cuộc tranh luận có cấu trúc giữa hai AI nhằm tìm ra giải pháp tốt nhất cho một vấn đề thực tế.`,\n    'Quy tắc:',\n    '- Luôn viết bằng tiếng Việt chuẩn, rõ ràng, dùng Markdown (tiêu đề ##, gạch đầu dòng, bảng khi phù hợp).',\n    '- Lập luận dựa trên logic và bằng chứng; nêu rõ giả định. Không bịa số liệu, nguồn hay trích dẫn; nếu là ước tính, ghi rõ \"ước tính\".',\n    '- Thẳng thắn nhưng tôn trọng; công nhận điểm đúng của đối phương, chỉ ra điểm sai bằng lý lẽ cụ thể.',\n    '- Đề xuất phải khả thi, có bước hành động cụ thể, phù hợp ràng buộc người dùng đưa ra.',\n    '- Viết súc tích: tối đa khoảng 1.200 từ.',\n  ].join('\\n');\n}\n\nfunction llmRequest(state, { round, role, stage, system, prompt }) {\n  return { request: { sessionId: state.sessionId, round, role, stage, system, prompt } };\n}\n\n// Kiểm tra kết quả từ gateway; ném lỗi tiếng Việt để Error Workflow báo về ứng dụng.\nfunction assertOk(results, stageLabel) {\n  for (const r of results) {\n    if (!r || r.ok !== true) {\n      const msg = (r && r.error && (r.error.message || r.error)) || 'Không nhận được phản hồi từ gateway';\n      throw new Error(`${stageLabel}: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);\n    }\n  }\n  return results;\n}\n\nfunction byRole(results) {\n  const out = {};\n  for (const r of results) out[r.role] = r;\n  return out;\n}\n\nfunction callSummary(r) {\n  return { round: r.round, role: r.role, model: r.model, provider: r.provider, usage: r.usage, costUsd: r.costUsd, attempts: r.attempts, latencyMs: r.latencyMs };\n}\n\nconst OTHER = { A: 'B', B: 'A' };\n\n// Trích JSON từ văn bản trả về của trọng tài (chịu được ```json fences, chữ thừa, dấu phẩy cuối).\nfunction extractJson(text) {\n  if (!text) return null;\n  let s = String(text).trim();\n  const fence = s.match(/```(?:json)?\\s*([\\s\\S]*?)```/i);\n  if (fence) s = fence[1].trim();\n  const start = s.indexOf('{');\n  const end = s.lastIndexOf('}');\n  if (start < 0 || end <= start) return null;\n  s = s.slice(start, end + 1);\n  const attempts = [s, s.replace(/,\\s*([}\\]])/g, '$1')];\n  for (const a of attempts) {\n    try {\n      const v = JSON.parse(a);\n      if (v && typeof v === 'object') return v;\n    } catch (e) { /* thử cách khác */ }\n  }\n  return null;\n}\n\nfunction num(v) {\n  const n = Number(v);\n  return Number.isFinite(n) ? n : null;\n}\n\n// Chuẩn hóa phán quyết & tính điểm có trọng số (0–100) một cách xác định, không phụ thuộc LLM.\nfunction normalizeJudge(j, criteria) {\n  const problems = [];\n  if (!j || typeof j !== 'object') return { valid: false, problems: ['Không phải JSON object'] };\n  const scores = { A: [], B: [] };\n  for (const side of ['A', 'B']) {\n    const arr = (j.scores && Array.isArray(j.scores[side])) ? j.scores[side] : [];\n    for (const c of criteria) {\n      const found = arr.find((x) => x && String(x.criterion || '').trim().toLowerCase() === c.name.toLowerCase())\n        || arr[criteria.indexOf(c)];\n      let s = found ? num(found.score) : null;\n      if (s === null) problems.push(`Thiếu điểm \"${c.name}\" cho Bên ${side}`);\n      else s = Math.max(0, Math.min(10, s));\n      scores[side].push({ criterion: c.name, weight: c.weight, score: s, comment: found ? String(found.comment || '') : '' });\n    }\n  }\n  const totalWeight = criteria.reduce((a, c) => a + c.weight, 0) || 1;\n  const weighted = {};\n  for (const side of ['A', 'B']) {\n    weighted[side] = Math.round((scores[side].reduce((a, x) => a + (x.score || 0) * x.weight, 0) / totalWeight) * 10 * 10) / 10;\n  }\n  let decision = String(j.decision || '').toUpperCase().trim();\n  if (['COMBINE', 'KET_HOP', 'KẾT HỢP', 'HYBRID'].includes(decision)) decision = 'COMBINE';\n  if (!['A', 'B', 'COMBINE'].includes(decision)) { problems.push('decision phải là A, B hoặc COMBINE'); decision = null; }\n  const arr = (v) => (Array.isArray(v) ? v : []);\n  const out = {\n    summary: String(j.summary || ''),\n    scores, weighted,\n    decision,\n    decisionRationale: String(j.decisionRationale || ''),\n    finalSolution: String(j.finalSolution || ''),\n    comparison: arr(j.comparison),\n    strengths: { A: arr(j.strengths && j.strengths.A), B: arr(j.strengths && j.strengths.B) },\n    weaknesses: { A: arr(j.weaknesses && j.weaknesses.A), B: arr(j.weaknesses && j.weaknesses.B) },\n    unresolvedDisagreements: arr(j.unresolvedDisagreements),\n    risks: arr(j.risks),\n    actionPlan: arr(j.actionPlan),\n    confidence: num(j.confidence),\n  };\n  if (!out.summary) problems.push('Thiếu summary');\n  if (!out.finalSolution) problems.push('Thiếu finalSolution');\n  return { valid: problems.length === 0 && decision !== null, problems, judge: out };\n}\n\nconst JUDGE_SCHEMA_HINT = `{\n  \"summary\": \"Tóm tắt 3-5 câu về cuộc tranh luận và kết luận\",\n  \"scores\": {\n    \"A\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ],\n    \"B\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ]\n  },\n  \"decision\": \"A\" | \"B\" | \"COMBINE\",\n  \"decisionRationale\": \"Vì sao chọn/kết hợp như vậy\",\n  \"finalSolution\": \"Giải pháp cuối cùng được khuyến nghị (Markdown, chi tiết, có các bước)\",\n  \"comparison\": [ { \"aspect\": \"Khía cạnh so sánh\", \"A\": \"…\", \"B\": \"…\", \"better\": \"A|B|Ngang nhau\" } ],\n  \"strengths\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"weaknesses\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"unresolvedDisagreements\": [ { \"issue\": \"…\", \"positionA\": \"…\", \"positionB\": \"…\", \"judgeView\": \"…\", \"howToResolve\": \"Cần dữ liệu/thử nghiệm gì để phân xử\" } ],\n  \"risks\": [ { \"risk\": \"…\", \"severity\": \"Cao|Trung bình|Thấp\", \"likelihood\": \"Cao|Trung bình|Thấp\", \"mitigation\": \"…\" } ],\n  \"actionPlan\": [ { \"step\": 1, \"action\": \"…\", \"owner\": \"…\", \"timeline\": \"…\", \"kpi\": \"…\" } ],\n  \"confidence\": 0-100\n}`;\n\nfunction mdCell(v) {\n  return String(v === undefined || v === null ? '' : v).replace(/\\|/g, '\\\\|').replace(/\\r?\\n+/g, '<br>');\n}\n// ===== Hết thư viện =====\n\n// ===== r3_build.js =====\n// Vòng 3: mỗi AI hoàn thiện phương án sau khi nhận phản biện.\nconst state = $input.first().json.state;\nreturn ['A', 'B'].map((side) => {\n  const other = OTHER[side];\n  const prompt = `${problemBlock(state.input)}\n---\n## PHƯƠNG ÁN VÒNG 1 CỦA BẠN (Bên ${side})\n${clip(state.rounds['1'][side])}\n\n---\n## PHẢN BIỆN CỦA ĐỐI PHƯƠNG (Bên ${other}) DÀNH CHO BẠN\n${clip(state.rounds['2'][other])}\n\n---\n## PHẢN BIỆN BẠN ĐÃ VIẾT VỀ PHƯƠNG ÁN ĐỐI PHƯƠNG\n${clip(state.rounds['2'][side], 12000)}\n\n---\n## NHIỆM VỤ — VÒNG 3: HOÀN THIỆN PHƯƠNG ÁN\nTiếp thu phản biện hợp lý, bác bỏ phản biện sai (có lý do), và đưa ra phương án CUỐI CÙNG tốt nhất. Có thể tiếp nhận ý hay của đối phương. Trình bày theo cấu trúc:\n## 1. Những thay đổi so với Vòng 1 và lý do\n## 2. Phản hồi từng phản biện chính (Chấp nhận / Bác bỏ — vì sao)\n## 3. Phương án cuối cùng (chi tiết, các bước cụ thể)\n## 4. Rủi ro còn lại & biện pháp giảm thiểu\n## 5. Kế hoạch hành động (bảng: Bước | Việc cần làm | Thời hạn | KPI)\n## 6. Bất đồng còn lại với đối phương (nếu có)`;\n  return { json: { state, ...llmRequest(state, { round: 3, role: side, stage: 'refine', system: debaterSystem(side, state.participants[side].label), prompt }) } };\n});\n"
+      }
+    },
+    {
+      "id": "c99ace6f-3a91-5a4d-a1e5-569eb417cd99",
+      "name": "Vòng 3: GPT & Claude hoàn thiện",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.APP_INTERNAL_URL }}/internal/llm",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-internal-token",
+              "value": "={{ $env.DEBATE_INTERNAL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request) }}",
+        "options": {
+          "timeout": 1500000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Mỗi bên hoàn thiện phương án",
+      "notesInFlow": true
+    },
+    {
+      "id": "667c7915-82f0-5684-ae48-1cc34c130265",
+      "name": "Vòng 3: Kiểm tra kết quả",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Sinh tự động từ n8n/src/code/r3_collect.js — sửa file nguồn rồi chạy \"npm run build:workflow\".\n// ===== Thư viện dùng chung (được chèn vào đầu mỗi Code node khi build workflow) =====\nconst MAX_TEXT_CHARS = 24000; // giới hạn độ dài mỗi văn bản đưa vào prompt (kiểm soát chi phí)\n\nfunction clip(text, max = MAX_TEXT_CHARS) {\n  const t = String(text || '').trim();\n  return t.length > max ? t.slice(0, max) + '\\n\\n[…đã cắt bớt do quá dài…]' : t;\n}\n\nfunction problemBlock(input) {\n  let s = `### VẤN ĐỀ CẦN GIẢI QUYẾT\\n${clip(input.problem, 8000)}\\n`;\n  if (input.context) s += `\\n### BỐI CẢNH\\n${clip(input.context, 8000)}\\n`;\n  if (input.goals) s += `\\n### MỤC TIÊU\\n${clip(input.goals, 4000)}\\n`;\n  if (input.constraints) s += `\\n### RÀNG BUỘC\\n${clip(input.constraints, 4000)}\\n`;\n  s += `\\n### TIÊU CHÍ ĐÁNH GIÁ (trọng số)\\n`;\n  for (const c of input.criteria || []) s += `- ${c.name} (${c.weight})${c.description ? `: ${c.description}` : ''}\\n`;\n  return s;\n}\n\nfunction debaterSystem(side, label) {\n  return [\n    `Bạn là ${label}, đóng vai \"Bên ${side}\" trong một cuộc tranh luận có cấu trúc giữa hai AI nhằm tìm ra giải pháp tốt nhất cho một vấn đề thực tế.`,\n    'Quy tắc:',\n    '- Luôn viết bằng tiếng Việt chuẩn, rõ ràng, dùng Markdown (tiêu đề ##, gạch đầu dòng, bảng khi phù hợp).',\n    '- Lập luận dựa trên logic và bằng chứng; nêu rõ giả định. Không bịa số liệu, nguồn hay trích dẫn; nếu là ước tính, ghi rõ \"ước tính\".',\n    '- Thẳng thắn nhưng tôn trọng; công nhận điểm đúng của đối phương, chỉ ra điểm sai bằng lý lẽ cụ thể.',\n    '- Đề xuất phải khả thi, có bước hành động cụ thể, phù hợp ràng buộc người dùng đưa ra.',\n    '- Viết súc tích: tối đa khoảng 1.200 từ.',\n  ].join('\\n');\n}\n\nfunction llmRequest(state, { round, role, stage, system, prompt }) {\n  return { request: { sessionId: state.sessionId, round, role, stage, system, prompt } };\n}\n\n// Kiểm tra kết quả từ gateway; ném lỗi tiếng Việt để Error Workflow báo về ứng dụng.\nfunction assertOk(results, stageLabel) {\n  for (const r of results) {\n    if (!r || r.ok !== true) {\n      const msg = (r && r.error && (r.error.message || r.error)) || 'Không nhận được phản hồi từ gateway';\n      throw new Error(`${stageLabel}: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);\n    }\n  }\n  return results;\n}\n\nfunction byRole(results) {\n  const out = {};\n  for (const r of results) out[r.role] = r;\n  return out;\n}\n\nfunction callSummary(r) {\n  return { round: r.round, role: r.role, model: r.model, provider: r.provider, usage: r.usage, costUsd: r.costUsd, attempts: r.attempts, latencyMs: r.latencyMs };\n}\n\nconst OTHER = { A: 'B', B: 'A' };\n\n// Trích JSON từ văn bản trả về của trọng tài (chịu được ```json fences, chữ thừa, dấu phẩy cuối).\nfunction extractJson(text) {\n  if (!text) return null;\n  let s = String(text).trim();\n  const fence = s.match(/```(?:json)?\\s*([\\s\\S]*?)```/i);\n  if (fence) s = fence[1].trim();\n  const start = s.indexOf('{');\n  const end = s.lastIndexOf('}');\n  if (start < 0 || end <= start) return null;\n  s = s.slice(start, end + 1);\n  const attempts = [s, s.replace(/,\\s*([}\\]])/g, '$1')];\n  for (const a of attempts) {\n    try {\n      const v = JSON.parse(a);\n      if (v && typeof v === 'object') return v;\n    } catch (e) { /* thử cách khác */ }\n  }\n  return null;\n}\n\nfunction num(v) {\n  const n = Number(v);\n  return Number.isFinite(n) ? n : null;\n}\n\n// Chuẩn hóa phán quyết & tính điểm có trọng số (0–100) một cách xác định, không phụ thuộc LLM.\nfunction normalizeJudge(j, criteria) {\n  const problems = [];\n  if (!j || typeof j !== 'object') return { valid: false, problems: ['Không phải JSON object'] };\n  const scores = { A: [], B: [] };\n  for (const side of ['A', 'B']) {\n    const arr = (j.scores && Array.isArray(j.scores[side])) ? j.scores[side] : [];\n    for (const c of criteria) {\n      const found = arr.find((x) => x && String(x.criterion || '').trim().toLowerCase() === c.name.toLowerCase())\n        || arr[criteria.indexOf(c)];\n      let s = found ? num(found.score) : null;\n      if (s === null) problems.push(`Thiếu điểm \"${c.name}\" cho Bên ${side}`);\n      else s = Math.max(0, Math.min(10, s));\n      scores[side].push({ criterion: c.name, weight: c.weight, score: s, comment: found ? String(found.comment || '') : '' });\n    }\n  }\n  const totalWeight = criteria.reduce((a, c) => a + c.weight, 0) || 1;\n  const weighted = {};\n  for (const side of ['A', 'B']) {\n    weighted[side] = Math.round((scores[side].reduce((a, x) => a + (x.score || 0) * x.weight, 0) / totalWeight) * 10 * 10) / 10;\n  }\n  let decision = String(j.decision || '').toUpperCase().trim();\n  if (['COMBINE', 'KET_HOP', 'KẾT HỢP', 'HYBRID'].includes(decision)) decision = 'COMBINE';\n  if (!['A', 'B', 'COMBINE'].includes(decision)) { problems.push('decision phải là A, B hoặc COMBINE'); decision = null; }\n  const arr = (v) => (Array.isArray(v) ? v : []);\n  const out = {\n    summary: String(j.summary || ''),\n    scores, weighted,\n    decision,\n    decisionRationale: String(j.decisionRationale || ''),\n    finalSolution: String(j.finalSolution || ''),\n    comparison: arr(j.comparison),\n    strengths: { A: arr(j.strengths && j.strengths.A), B: arr(j.strengths && j.strengths.B) },\n    weaknesses: { A: arr(j.weaknesses && j.weaknesses.A), B: arr(j.weaknesses && j.weaknesses.B) },\n    unresolvedDisagreements: arr(j.unresolvedDisagreements),\n    risks: arr(j.risks),\n    actionPlan: arr(j.actionPlan),\n    confidence: num(j.confidence),\n  };\n  if (!out.summary) problems.push('Thiếu summary');\n  if (!out.finalSolution) problems.push('Thiếu finalSolution');\n  return { valid: problems.length === 0 && decision !== null, problems, judge: out };\n}\n\nconst JUDGE_SCHEMA_HINT = `{\n  \"summary\": \"Tóm tắt 3-5 câu về cuộc tranh luận và kết luận\",\n  \"scores\": {\n    \"A\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ],\n    \"B\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ]\n  },\n  \"decision\": \"A\" | \"B\" | \"COMBINE\",\n  \"decisionRationale\": \"Vì sao chọn/kết hợp như vậy\",\n  \"finalSolution\": \"Giải pháp cuối cùng được khuyến nghị (Markdown, chi tiết, có các bước)\",\n  \"comparison\": [ { \"aspect\": \"Khía cạnh so sánh\", \"A\": \"…\", \"B\": \"…\", \"better\": \"A|B|Ngang nhau\" } ],\n  \"strengths\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"weaknesses\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"unresolvedDisagreements\": [ { \"issue\": \"…\", \"positionA\": \"…\", \"positionB\": \"…\", \"judgeView\": \"…\", \"howToResolve\": \"Cần dữ liệu/thử nghiệm gì để phân xử\" } ],\n  \"risks\": [ { \"risk\": \"…\", \"severity\": \"Cao|Trung bình|Thấp\", \"likelihood\": \"Cao|Trung bình|Thấp\", \"mitigation\": \"…\" } ],\n  \"actionPlan\": [ { \"step\": 1, \"action\": \"…\", \"owner\": \"…\", \"timeline\": \"…\", \"kpi\": \"…\" } ],\n  \"confidence\": 0-100\n}`;\n\nfunction mdCell(v) {\n  return String(v === undefined || v === null ? '' : v).replace(/\\|/g, '\\\\|').replace(/\\r?\\n+/g, '<br>');\n}\n// ===== Hết thư viện =====\n\n// ===== r3_collect.js =====\nconst state = JSON.parse(JSON.stringify($('Vòng 3: Soạn đề bài hoàn thiện').first().json.state));\nconst res = byRole(assertOk($input.all().map((i) => i.json), 'Vòng 3'));\nif (!res.A || !res.B) throw new Error('Vòng 3: thiếu kết quả của một bên');\nstate.rounds['3'] = { A: res.A.text, B: res.B.text };\nstate.calls.push(callSummary(res.A), callSummary(res.B));\nreturn [{ json: { state } }];\n"
+      }
+    },
+    {
+      "id": "72f8344d-ca2e-5721-aec6-0a4e6ae74fab",
+      "name": "Trọng tài: Soạn hồ sơ",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Sinh tự động từ n8n/src/code/judge_build.js — sửa file nguồn rồi chạy \"npm run build:workflow\".\n// ===== Thư viện dùng chung (được chèn vào đầu mỗi Code node khi build workflow) =====\nconst MAX_TEXT_CHARS = 24000; // giới hạn độ dài mỗi văn bản đưa vào prompt (kiểm soát chi phí)\n\nfunction clip(text, max = MAX_TEXT_CHARS) {\n  const t = String(text || '').trim();\n  return t.length > max ? t.slice(0, max) + '\\n\\n[…đã cắt bớt do quá dài…]' : t;\n}\n\nfunction problemBlock(input) {\n  let s = `### VẤN ĐỀ CẦN GIẢI QUYẾT\\n${clip(input.problem, 8000)}\\n`;\n  if (input.context) s += `\\n### BỐI CẢNH\\n${clip(input.context, 8000)}\\n`;\n  if (input.goals) s += `\\n### MỤC TIÊU\\n${clip(input.goals, 4000)}\\n`;\n  if (input.constraints) s += `\\n### RÀNG BUỘC\\n${clip(input.constraints, 4000)}\\n`;\n  s += `\\n### TIÊU CHÍ ĐÁNH GIÁ (trọng số)\\n`;\n  for (const c of input.criteria || []) s += `- ${c.name} (${c.weight})${c.description ? `: ${c.description}` : ''}\\n`;\n  return s;\n}\n\nfunction debaterSystem(side, label) {\n  return [\n    `Bạn là ${label}, đóng vai \"Bên ${side}\" trong một cuộc tranh luận có cấu trúc giữa hai AI nhằm tìm ra giải pháp tốt nhất cho một vấn đề thực tế.`,\n    'Quy tắc:',\n    '- Luôn viết bằng tiếng Việt chuẩn, rõ ràng, dùng Markdown (tiêu đề ##, gạch đầu dòng, bảng khi phù hợp).',\n    '- Lập luận dựa trên logic và bằng chứng; nêu rõ giả định. Không bịa số liệu, nguồn hay trích dẫn; nếu là ước tính, ghi rõ \"ước tính\".',\n    '- Thẳng thắn nhưng tôn trọng; công nhận điểm đúng của đối phương, chỉ ra điểm sai bằng lý lẽ cụ thể.',\n    '- Đề xuất phải khả thi, có bước hành động cụ thể, phù hợp ràng buộc người dùng đưa ra.',\n    '- Viết súc tích: tối đa khoảng 1.200 từ.',\n  ].join('\\n');\n}\n\nfunction llmRequest(state, { round, role, stage, system, prompt }) {\n  return { request: { sessionId: state.sessionId, round, role, stage, system, prompt } };\n}\n\n// Kiểm tra kết quả từ gateway; ném lỗi tiếng Việt để Error Workflow báo về ứng dụng.\nfunction assertOk(results, stageLabel) {\n  for (const r of results) {\n    if (!r || r.ok !== true) {\n      const msg = (r && r.error && (r.error.message || r.error)) || 'Không nhận được phản hồi từ gateway';\n      throw new Error(`${stageLabel}: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);\n    }\n  }\n  return results;\n}\n\nfunction byRole(results) {\n  const out = {};\n  for (const r of results) out[r.role] = r;\n  return out;\n}\n\nfunction callSummary(r) {\n  return { round: r.round, role: r.role, model: r.model, provider: r.provider, usage: r.usage, costUsd: r.costUsd, attempts: r.attempts, latencyMs: r.latencyMs };\n}\n\nconst OTHER = { A: 'B', B: 'A' };\n\n// Trích JSON từ văn bản trả về của trọng tài (chịu được ```json fences, chữ thừa, dấu phẩy cuối).\nfunction extractJson(text) {\n  if (!text) return null;\n  let s = String(text).trim();\n  const fence = s.match(/```(?:json)?\\s*([\\s\\S]*?)```/i);\n  if (fence) s = fence[1].trim();\n  const start = s.indexOf('{');\n  const end = s.lastIndexOf('}');\n  if (start < 0 || end <= start) return null;\n  s = s.slice(start, end + 1);\n  const attempts = [s, s.replace(/,\\s*([}\\]])/g, '$1')];\n  for (const a of attempts) {\n    try {\n      const v = JSON.parse(a);\n      if (v && typeof v === 'object') return v;\n    } catch (e) { /* thử cách khác */ }\n  }\n  return null;\n}\n\nfunction num(v) {\n  const n = Number(v);\n  return Number.isFinite(n) ? n : null;\n}\n\n// Chuẩn hóa phán quyết & tính điểm có trọng số (0–100) một cách xác định, không phụ thuộc LLM.\nfunction normalizeJudge(j, criteria) {\n  const problems = [];\n  if (!j || typeof j !== 'object') return { valid: false, problems: ['Không phải JSON object'] };\n  const scores = { A: [], B: [] };\n  for (const side of ['A', 'B']) {\n    const arr = (j.scores && Array.isArray(j.scores[side])) ? j.scores[side] : [];\n    for (const c of criteria) {\n      const found = arr.find((x) => x && String(x.criterion || '').trim().toLowerCase() === c.name.toLowerCase())\n        || arr[criteria.indexOf(c)];\n      let s = found ? num(found.score) : null;\n      if (s === null) problems.push(`Thiếu điểm \"${c.name}\" cho Bên ${side}`);\n      else s = Math.max(0, Math.min(10, s));\n      scores[side].push({ criterion: c.name, weight: c.weight, score: s, comment: found ? String(found.comment || '') : '' });\n    }\n  }\n  const totalWeight = criteria.reduce((a, c) => a + c.weight, 0) || 1;\n  const weighted = {};\n  for (const side of ['A', 'B']) {\n    weighted[side] = Math.round((scores[side].reduce((a, x) => a + (x.score || 0) * x.weight, 0) / totalWeight) * 10 * 10) / 10;\n  }\n  let decision = String(j.decision || '').toUpperCase().trim();\n  if (['COMBINE', 'KET_HOP', 'KẾT HỢP', 'HYBRID'].includes(decision)) decision = 'COMBINE';\n  if (!['A', 'B', 'COMBINE'].includes(decision)) { problems.push('decision phải là A, B hoặc COMBINE'); decision = null; }\n  const arr = (v) => (Array.isArray(v) ? v : []);\n  const out = {\n    summary: String(j.summary || ''),\n    scores, weighted,\n    decision,\n    decisionRationale: String(j.decisionRationale || ''),\n    finalSolution: String(j.finalSolution || ''),\n    comparison: arr(j.comparison),\n    strengths: { A: arr(j.strengths && j.strengths.A), B: arr(j.strengths && j.strengths.B) },\n    weaknesses: { A: arr(j.weaknesses && j.weaknesses.A), B: arr(j.weaknesses && j.weaknesses.B) },\n    unresolvedDisagreements: arr(j.unresolvedDisagreements),\n    risks: arr(j.risks),\n    actionPlan: arr(j.actionPlan),\n    confidence: num(j.confidence),\n  };\n  if (!out.summary) problems.push('Thiếu summary');\n  if (!out.finalSolution) problems.push('Thiếu finalSolution');\n  return { valid: problems.length === 0 && decision !== null, problems, judge: out };\n}\n\nconst JUDGE_SCHEMA_HINT = `{\n  \"summary\": \"Tóm tắt 3-5 câu về cuộc tranh luận và kết luận\",\n  \"scores\": {\n    \"A\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ],\n    \"B\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ]\n  },\n  \"decision\": \"A\" | \"B\" | \"COMBINE\",\n  \"decisionRationale\": \"Vì sao chọn/kết hợp như vậy\",\n  \"finalSolution\": \"Giải pháp cuối cùng được khuyến nghị (Markdown, chi tiết, có các bước)\",\n  \"comparison\": [ { \"aspect\": \"Khía cạnh so sánh\", \"A\": \"…\", \"B\": \"…\", \"better\": \"A|B|Ngang nhau\" } ],\n  \"strengths\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"weaknesses\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"unresolvedDisagreements\": [ { \"issue\": \"…\", \"positionA\": \"…\", \"positionB\": \"…\", \"judgeView\": \"…\", \"howToResolve\": \"Cần dữ liệu/thử nghiệm gì để phân xử\" } ],\n  \"risks\": [ { \"risk\": \"…\", \"severity\": \"Cao|Trung bình|Thấp\", \"likelihood\": \"Cao|Trung bình|Thấp\", \"mitigation\": \"…\" } ],\n  \"actionPlan\": [ { \"step\": 1, \"action\": \"…\", \"owner\": \"…\", \"timeline\": \"…\", \"kpi\": \"…\" } ],\n  \"confidence\": 0-100\n}`;\n\nfunction mdCell(v) {\n  return String(v === undefined || v === null ? '' : v).replace(/\\|/g, '\\\\|').replace(/\\r?\\n+/g, '<br>');\n}\n// ===== Hết thư viện =====\n\n// ===== judge_build.js =====\n// Trọng tài Muse đánh giá \"mù\" (không biết bên nào là GPT/Claude) bằng tiêu chí định lượng.\nconst state = $input.first().json.state;\nconst R = state.rounds;\nconst criteriaList = state.input.criteria.map((c, i) => `${i + 1}. \"${c.name}\" — trọng số ${c.weight}${c.description ? ` — ${c.description}` : ''}`).join('\\n');\nconst system = [\n  'Bạn là TRỌNG TÀI ĐỘC LẬP, công tâm, chuyên đánh giá các phương án giải quyết vấn đề.',\n  'Bạn KHÔNG biết danh tính hai bên tranh luận; chỉ đánh giá nội dung.',\n  'Nguyên tắc: dựa trên chất lượng lập luận, bằng chứng, tính khả thi, mức độ đáp ứng mục tiêu và ràng buộc; không thiên vị theo độ dài hay văn phong;',\n  'chấm điểm PHƯƠNG ÁN CUỐI CÙNG (Vòng 3) của mỗi bên, có xét cách mỗi bên xử lý phản biện ở Vòng 2.',\n  'Bạn có thể chọn A, chọn B, hoặc COMBINE (kết hợp) — nếu kết hợp, nói rõ lấy phần nào từ mỗi bên.',\n  'Phải nêu trung thực các bất đồng CHƯA được giải quyết và cách phân xử chúng (cần dữ liệu/thử nghiệm gì).',\n  'Chỉ trả về MỘT JSON object hợp lệ, không thêm bất kỳ chữ nào ngoài JSON, không dùng ``` . Mọi giá trị chuỗi viết bằng tiếng Việt.',\n].join('\\n');\nconst prompt = `${problemBlock(state.input)}\n---\n# HỒ SƠ TRANH LUẬN\n\n## VÒNG 1 — PHÂN TÍCH ĐỘC LẬP\n### Phương án A (Vòng 1)\n${clip(R['1'].A, 16000)}\n\n### Phương án B (Vòng 1)\n${clip(R['1'].B, 16000)}\n\n## VÒNG 2 — PHẢN BIỆN CHÉO\n### Bên A phản biện Bên B\n${clip(R['2'].A, 14000)}\n\n### Bên B phản biện Bên A\n${clip(R['2'].B, 14000)}\n\n## VÒNG 3 — PHƯƠNG ÁN CUỐI CÙNG\n### Phương án cuối cùng của A\n${clip(R['3'].A)}\n\n### Phương án cuối cùng của B\n${clip(R['3'].B)}\n\n---\n# YÊU CẦU CHẤM ĐIỂM\nChấm mỗi bên theo TỪNG tiêu chí dưới đây, thang 0–10 (cho phép số lẻ .5), dùng ĐÚNG tên tiêu chí:\n${criteriaList}\n\nLưu ý: KHÔNG tự tính điểm tổng — hệ thống sẽ tự tính điểm có trọng số.\nBảng so sánh \"comparison\" cần 5–8 khía cạnh. \"actionPlan\" cần 4–10 bước cụ thể cho giải pháp cuối cùng. \"risks\" cần 3–8 rủi ro.\n\nTrả về JSON đúng schema sau:\n${JUDGE_SCHEMA_HINT}`;\nreturn [{ json: { state, ...llmRequest(state, { round: 4, role: 'judge', stage: 'judge', system, prompt }) } }];\n"
+      }
+    },
+    {
+      "id": "e06f25f5-7e3f-54f1-ae08-4d8589cc9a26",
+      "name": "Trọng tài: Muse đánh giá",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2860,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.APP_INTERNAL_URL }}/internal/llm",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-internal-token",
+              "value": "={{ $env.DEBATE_INTERNAL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request) }}",
+        "options": {
+          "timeout": 1500000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Meta Muse Wonder chấm điểm \"mù\"",
+      "notesInFlow": true
+    },
+    {
+      "id": "d7ac0d8b-aec5-5a77-ac42-744bfa728cf2",
+      "name": "Trọng tài: Đọc phán quyết",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Sinh tự động từ n8n/src/code/judge_parse.js — sửa file nguồn rồi chạy \"npm run build:workflow\".\n// ===== Thư viện dùng chung (được chèn vào đầu mỗi Code node khi build workflow) =====\nconst MAX_TEXT_CHARS = 24000; // giới hạn độ dài mỗi văn bản đưa vào prompt (kiểm soát chi phí)\n\nfunction clip(text, max = MAX_TEXT_CHARS) {\n  const t = String(text || '').trim();\n  return t.length > max ? t.slice(0, max) + '\\n\\n[…đã cắt bớt do quá dài…]' : t;\n}\n\nfunction problemBlock(input) {\n  let s = `### VẤN ĐỀ CẦN GIẢI QUYẾT\\n${clip(input.problem, 8000)}\\n`;\n  if (input.context) s += `\\n### BỐI CẢNH\\n${clip(input.context, 8000)}\\n`;\n  if (input.goals) s += `\\n### MỤC TIÊU\\n${clip(input.goals, 4000)}\\n`;\n  if (input.constraints) s += `\\n### RÀNG BUỘC\\n${clip(input.constraints, 4000)}\\n`;\n  s += `\\n### TIÊU CHÍ ĐÁNH GIÁ (trọng số)\\n`;\n  for (const c of input.criteria || []) s += `- ${c.name} (${c.weight})${c.description ? `: ${c.description}` : ''}\\n`;\n  return s;\n}\n\nfunction debaterSystem(side, label) {\n  return [\n    `Bạn là ${label}, đóng vai \"Bên ${side}\" trong một cuộc tranh luận có cấu trúc giữa hai AI nhằm tìm ra giải pháp tốt nhất cho một vấn đề thực tế.`,\n    'Quy tắc:',\n    '- Luôn viết bằng tiếng Việt chuẩn, rõ ràng, dùng Markdown (tiêu đề ##, gạch đầu dòng, bảng khi phù hợp).',\n    '- Lập luận dựa trên logic và bằng chứng; nêu rõ giả định. Không bịa số liệu, nguồn hay trích dẫn; nếu là ước tính, ghi rõ \"ước tính\".',\n    '- Thẳng thắn nhưng tôn trọng; công nhận điểm đúng của đối phương, chỉ ra điểm sai bằng lý lẽ cụ thể.',\n    '- Đề xuất phải khả thi, có bước hành động cụ thể, phù hợp ràng buộc người dùng đưa ra.',\n    '- Viết súc tích: tối đa khoảng 1.200 từ.',\n  ].join('\\n');\n}\n\nfunction llmRequest(state, { round, role, stage, system, prompt }) {\n  return { request: { sessionId: state.sessionId, round, role, stage, system, prompt } };\n}\n\n// Kiểm tra kết quả từ gateway; ném lỗi tiếng Việt để Error Workflow báo về ứng dụng.\nfunction assertOk(results, stageLabel) {\n  for (const r of results) {\n    if (!r || r.ok !== true) {\n      const msg = (r && r.error && (r.error.message || r.error)) || 'Không nhận được phản hồi từ gateway';\n      throw new Error(`${stageLabel}: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);\n    }\n  }\n  return results;\n}\n\nfunction byRole(results) {\n  const out = {};\n  for (const r of results) out[r.role] = r;\n  return out;\n}\n\nfunction callSummary(r) {\n  return { round: r.round, role: r.role, model: r.model, provider: r.provider, usage: r.usage, costUsd: r.costUsd, attempts: r.attempts, latencyMs: r.latencyMs };\n}\n\nconst OTHER = { A: 'B', B: 'A' };\n\n// Trích JSON từ văn bản trả về của trọng tài (chịu được ```json fences, chữ thừa, dấu phẩy cuối).\nfunction extractJson(text) {\n  if (!text) return null;\n  let s = String(text).trim();\n  const fence = s.match(/```(?:json)?\\s*([\\s\\S]*?)```/i);\n  if (fence) s = fence[1].trim();\n  const start = s.indexOf('{');\n  const end = s.lastIndexOf('}');\n  if (start < 0 || end <= start) return null;\n  s = s.slice(start, end + 1);\n  const attempts = [s, s.replace(/,\\s*([}\\]])/g, '$1')];\n  for (const a of attempts) {\n    try {\n      const v = JSON.parse(a);\n      if (v && typeof v === 'object') return v;\n    } catch (e) { /* thử cách khác */ }\n  }\n  return null;\n}\n\nfunction num(v) {\n  const n = Number(v);\n  return Number.isFinite(n) ? n : null;\n}\n\n// Chuẩn hóa phán quyết & tính điểm có trọng số (0–100) một cách xác định, không phụ thuộc LLM.\nfunction normalizeJudge(j, criteria) {\n  const problems = [];\n  if (!j || typeof j !== 'object') return { valid: false, problems: ['Không phải JSON object'] };\n  const scores = { A: [], B: [] };\n  for (const side of ['A', 'B']) {\n    const arr = (j.scores && Array.isArray(j.scores[side])) ? j.scores[side] : [];\n    for (const c of criteria) {\n      const found = arr.find((x) => x && String(x.criterion || '').trim().toLowerCase() === c.name.toLowerCase())\n        || arr[criteria.indexOf(c)];\n      let s = found ? num(found.score) : null;\n      if (s === null) problems.push(`Thiếu điểm \"${c.name}\" cho Bên ${side}`);\n      else s = Math.max(0, Math.min(10, s));\n      scores[side].push({ criterion: c.name, weight: c.weight, score: s, comment: found ? String(found.comment || '') : '' });\n    }\n  }\n  const totalWeight = criteria.reduce((a, c) => a + c.weight, 0) || 1;\n  const weighted = {};\n  for (const side of ['A', 'B']) {\n    weighted[side] = Math.round((scores[side].reduce((a, x) => a + (x.score || 0) * x.weight, 0) / totalWeight) * 10 * 10) / 10;\n  }\n  let decision = String(j.decision || '').toUpperCase().trim();\n  if (['COMBINE', 'KET_HOP', 'KẾT HỢP', 'HYBRID'].includes(decision)) decision = 'COMBINE';\n  if (!['A', 'B', 'COMBINE'].includes(decision)) { problems.push('decision phải là A, B hoặc COMBINE'); decision = null; }\n  const arr = (v) => (Array.isArray(v) ? v : []);\n  const out = {\n    summary: String(j.summary || ''),\n    scores, weighted,\n    decision,\n    decisionRationale: String(j.decisionRationale || ''),\n    finalSolution: String(j.finalSolution || ''),\n    comparison: arr(j.comparison),\n    strengths: { A: arr(j.strengths && j.strengths.A), B: arr(j.strengths && j.strengths.B) },\n    weaknesses: { A: arr(j.weaknesses && j.weaknesses.A), B: arr(j.weaknesses && j.weaknesses.B) },\n    unresolvedDisagreements: arr(j.unresolvedDisagreements),\n    risks: arr(j.risks),\n    actionPlan: arr(j.actionPlan),\n    confidence: num(j.confidence),\n  };\n  if (!out.summary) problems.push('Thiếu summary');\n  if (!out.finalSolution) problems.push('Thiếu finalSolution');\n  return { valid: problems.length === 0 && decision !== null, problems, judge: out };\n}\n\nconst JUDGE_SCHEMA_HINT = `{\n  \"summary\": \"Tóm tắt 3-5 câu về cuộc tranh luận và kết luận\",\n  \"scores\": {\n    \"A\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ],\n    \"B\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ]\n  },\n  \"decision\": \"A\" | \"B\" | \"COMBINE\",\n  \"decisionRationale\": \"Vì sao chọn/kết hợp như vậy\",\n  \"finalSolution\": \"Giải pháp cuối cùng được khuyến nghị (Markdown, chi tiết, có các bước)\",\n  \"comparison\": [ { \"aspect\": \"Khía cạnh so sánh\", \"A\": \"…\", \"B\": \"…\", \"better\": \"A|B|Ngang nhau\" } ],\n  \"strengths\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"weaknesses\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"unresolvedDisagreements\": [ { \"issue\": \"…\", \"positionA\": \"…\", \"positionB\": \"…\", \"judgeView\": \"…\", \"howToResolve\": \"Cần dữ liệu/thử nghiệm gì để phân xử\" } ],\n  \"risks\": [ { \"risk\": \"…\", \"severity\": \"Cao|Trung bình|Thấp\", \"likelihood\": \"Cao|Trung bình|Thấp\", \"mitigation\": \"…\" } ],\n  \"actionPlan\": [ { \"step\": 1, \"action\": \"…\", \"owner\": \"…\", \"timeline\": \"…\", \"kpi\": \"…\" } ],\n  \"confidence\": 0-100\n}`;\n\nfunction mdCell(v) {\n  return String(v === undefined || v === null ? '' : v).replace(/\\|/g, '\\\\|').replace(/\\r?\\n+/g, '<br>');\n}\n// ===== Hết thư viện =====\n\n// ===== judge_parse.js =====\nconst state = JSON.parse(JSON.stringify($('Trọng tài: Soạn hồ sơ').first().json.state));\nconst r = assertOk([$input.first().json], 'Trọng tài')[0];\nstate.calls.push(callSummary(r));\nconst parsed = normalizeJudge(extractJson(r.text), state.input.criteria);\nreturn [{ json: { state, judgeRaw: r.text, valid: parsed.valid, problems: parsed.problems, judge: parsed.judge || null } }];\n"
+      }
+    },
+    {
+      "id": "1a765329-f764-5a7f-ac29-6faa75957697",
+      "name": "JSON hợp lệ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3300,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "dfed9ccf-2e87-546c-aa74-7037717d8b50",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "2d860e14-6ea4-54a9-a4be-087d6b2fc12d",
+      "name": "Trọng tài: Yêu cầu sửa JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        520
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Sinh tự động từ n8n/src/code/judge_repair_build.js — sửa file nguồn rồi chạy \"npm run build:workflow\".\n// ===== Thư viện dùng chung (được chèn vào đầu mỗi Code node khi build workflow) =====\nconst MAX_TEXT_CHARS = 24000; // giới hạn độ dài mỗi văn bản đưa vào prompt (kiểm soát chi phí)\n\nfunction clip(text, max = MAX_TEXT_CHARS) {\n  const t = String(text || '').trim();\n  return t.length > max ? t.slice(0, max) + '\\n\\n[…đã cắt bớt do quá dài…]' : t;\n}\n\nfunction problemBlock(input) {\n  let s = `### VẤN ĐỀ CẦN GIẢI QUYẾT\\n${clip(input.problem, 8000)}\\n`;\n  if (input.context) s += `\\n### BỐI CẢNH\\n${clip(input.context, 8000)}\\n`;\n  if (input.goals) s += `\\n### MỤC TIÊU\\n${clip(input.goals, 4000)}\\n`;\n  if (input.constraints) s += `\\n### RÀNG BUỘC\\n${clip(input.constraints, 4000)}\\n`;\n  s += `\\n### TIÊU CHÍ ĐÁNH GIÁ (trọng số)\\n`;\n  for (const c of input.criteria || []) s += `- ${c.name} (${c.weight})${c.description ? `: ${c.description}` : ''}\\n`;\n  return s;\n}\n\nfunction debaterSystem(side, label) {\n  return [\n    `Bạn là ${label}, đóng vai \"Bên ${side}\" trong một cuộc tranh luận có cấu trúc giữa hai AI nhằm tìm ra giải pháp tốt nhất cho một vấn đề thực tế.`,\n    'Quy tắc:',\n    '- Luôn viết bằng tiếng Việt chuẩn, rõ ràng, dùng Markdown (tiêu đề ##, gạch đầu dòng, bảng khi phù hợp).',\n    '- Lập luận dựa trên logic và bằng chứng; nêu rõ giả định. Không bịa số liệu, nguồn hay trích dẫn; nếu là ước tính, ghi rõ \"ước tính\".',\n    '- Thẳng thắn nhưng tôn trọng; công nhận điểm đúng của đối phương, chỉ ra điểm sai bằng lý lẽ cụ thể.',\n    '- Đề xuất phải khả thi, có bước hành động cụ thể, phù hợp ràng buộc người dùng đưa ra.',\n    '- Viết súc tích: tối đa khoảng 1.200 từ.',\n  ].join('\\n');\n}\n\nfunction llmRequest(state, { round, role, stage, system, prompt }) {\n  return { request: { sessionId: state.sessionId, round, role, stage, system, prompt } };\n}\n\n// Kiểm tra kết quả từ gateway; ném lỗi tiếng Việt để Error Workflow báo về ứng dụng.\nfunction assertOk(results, stageLabel) {\n  for (const r of results) {\n    if (!r || r.ok !== true) {\n      const msg = (r && r.error && (r.error.message || r.error)) || 'Không nhận được phản hồi từ gateway';\n      throw new Error(`${stageLabel}: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);\n    }\n  }\n  return results;\n}\n\nfunction byRole(results) {\n  const out = {};\n  for (const r of results) out[r.role] = r;\n  return out;\n}\n\nfunction callSummary(r) {\n  return { round: r.round, role: r.role, model: r.model, provider: r.provider, usage: r.usage, costUsd: r.costUsd, attempts: r.attempts, latencyMs: r.latencyMs };\n}\n\nconst OTHER = { A: 'B', B: 'A' };\n\n// Trích JSON từ văn bản trả về của trọng tài (chịu được ```json fences, chữ thừa, dấu phẩy cuối).\nfunction extractJson(text) {\n  if (!text) return null;\n  let s = String(text).trim();\n  const fence = s.match(/```(?:json)?\\s*([\\s\\S]*?)```/i);\n  if (fence) s = fence[1].trim();\n  const start = s.indexOf('{');\n  const end = s.lastIndexOf('}');\n  if (start < 0 || end <= start) return null;\n  s = s.slice(start, end + 1);\n  const attempts = [s, s.replace(/,\\s*([}\\]])/g, '$1')];\n  for (const a of attempts) {\n    try {\n      const v = JSON.parse(a);\n      if (v && typeof v === 'object') return v;\n    } catch (e) { /* thử cách khác */ }\n  }\n  return null;\n}\n\nfunction num(v) {\n  const n = Number(v);\n  return Number.isFinite(n) ? n : null;\n}\n\n// Chuẩn hóa phán quyết & tính điểm có trọng số (0–100) một cách xác định, không phụ thuộc LLM.\nfunction normalizeJudge(j, criteria) {\n  const problems = [];\n  if (!j || typeof j !== 'object') return { valid: false, problems: ['Không phải JSON object'] };\n  const scores = { A: [], B: [] };\n  for (const side of ['A', 'B']) {\n    const arr = (j.scores && Array.isArray(j.scores[side])) ? j.scores[side] : [];\n    for (const c of criteria) {\n      const found = arr.find((x) => x && String(x.criterion || '').trim().toLowerCase() === c.name.toLowerCase())\n        || arr[criteria.indexOf(c)];\n      let s = found ? num(found.score) : null;\n      if (s === null) problems.push(`Thiếu điểm \"${c.name}\" cho Bên ${side}`);\n      else s = Math.max(0, Math.min(10, s));\n      scores[side].push({ criterion: c.name, weight: c.weight, score: s, comment: found ? String(found.comment || '') : '' });\n    }\n  }\n  const totalWeight = criteria.reduce((a, c) => a + c.weight, 0) || 1;\n  const weighted = {};\n  for (const side of ['A', 'B']) {\n    weighted[side] = Math.round((scores[side].reduce((a, x) => a + (x.score || 0) * x.weight, 0) / totalWeight) * 10 * 10) / 10;\n  }\n  let decision = String(j.decision || '').toUpperCase().trim();\n  if (['COMBINE', 'KET_HOP', 'KẾT HỢP', 'HYBRID'].includes(decision)) decision = 'COMBINE';\n  if (!['A', 'B', 'COMBINE'].includes(decision)) { problems.push('decision phải là A, B hoặc COMBINE'); decision = null; }\n  const arr = (v) => (Array.isArray(v) ? v : []);\n  const out = {\n    summary: String(j.summary || ''),\n    scores, weighted,\n    decision,\n    decisionRationale: String(j.decisionRationale || ''),\n    finalSolution: String(j.finalSolution || ''),\n    comparison: arr(j.comparison),\n    strengths: { A: arr(j.strengths && j.strengths.A), B: arr(j.strengths && j.strengths.B) },\n    weaknesses: { A: arr(j.weaknesses && j.weaknesses.A), B: arr(j.weaknesses && j.weaknesses.B) },\n    unresolvedDisagreements: arr(j.unresolvedDisagreements),\n    risks: arr(j.risks),\n    actionPlan: arr(j.actionPlan),\n    confidence: num(j.confidence),\n  };\n  if (!out.summary) problems.push('Thiếu summary');\n  if (!out.finalSolution) problems.push('Thiếu finalSolution');\n  return { valid: problems.length === 0 && decision !== null, problems, judge: out };\n}\n\nconst JUDGE_SCHEMA_HINT = `{\n  \"summary\": \"Tóm tắt 3-5 câu về cuộc tranh luận và kết luận\",\n  \"scores\": {\n    \"A\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ],\n    \"B\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ]\n  },\n  \"decision\": \"A\" | \"B\" | \"COMBINE\",\n  \"decisionRationale\": \"Vì sao chọn/kết hợp như vậy\",\n  \"finalSolution\": \"Giải pháp cuối cùng được khuyến nghị (Markdown, chi tiết, có các bước)\",\n  \"comparison\": [ { \"aspect\": \"Khía cạnh so sánh\", \"A\": \"…\", \"B\": \"…\", \"better\": \"A|B|Ngang nhau\" } ],\n  \"strengths\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"weaknesses\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"unresolvedDisagreements\": [ { \"issue\": \"…\", \"positionA\": \"…\", \"positionB\": \"…\", \"judgeView\": \"…\", \"howToResolve\": \"Cần dữ liệu/thử nghiệm gì để phân xử\" } ],\n  \"risks\": [ { \"risk\": \"…\", \"severity\": \"Cao|Trung bình|Thấp\", \"likelihood\": \"Cao|Trung bình|Thấp\", \"mitigation\": \"…\" } ],\n  \"actionPlan\": [ { \"step\": 1, \"action\": \"…\", \"owner\": \"…\", \"timeline\": \"…\", \"kpi\": \"…\" } ],\n  \"confidence\": 0-100\n}`;\n\nfunction mdCell(v) {\n  return String(v === undefined || v === null ? '' : v).replace(/\\|/g, '\\\\|').replace(/\\r?\\n+/g, '<br>');\n}\n// ===== Hết thư viện =====\n\n// ===== judge_repair_build.js =====\n// Phán quyết chưa đúng định dạng: yêu cầu trọng tài sửa lại JSON (1 lần).\nconst prev = $input.first().json;\nconst state = prev.state;\nconst system = 'Bạn là trợ lý chuẩn hóa dữ liệu. Chỉ trả về MỘT JSON object hợp lệ, không thêm chữ nào khác, không dùng ```.';\nconst prompt = `Văn bản dưới đây là phán quyết của trọng tài nhưng chưa phải JSON hợp lệ theo schema yêu cầu.\nCác vấn đề phát hiện: ${(prev.problems || []).join('; ') || 'không đọc được JSON'}.\n\nTên tiêu chí chính xác: ${state.input.criteria.map((c) => `\"${c.name}\"`).join(', ')}.\n\nHãy chuyển nó thành JSON đúng schema, GIỮ NGUYÊN nội dung đánh giá và điểm số; chỉ bổ sung trường thiếu khi suy ra được từ văn bản.\n\nSCHEMA:\n${JUDGE_SCHEMA_HINT}\n\nVĂN BẢN GỐC:\n${clip(prev.judgeRaw, 40000)}`;\nreturn [{ json: { state, ...llmRequest(state, { round: 5, role: 'judge', stage: 'judge', system, prompt }) } }];\n"
+      }
+    },
+    {
+      "id": "b2aef979-e505-5148-acd1-317fef96fc02",
+      "name": "Trọng tài: Muse sửa JSON",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3740,
+        520
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.APP_INTERNAL_URL }}/internal/llm",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-internal-token",
+              "value": "={{ $env.DEBATE_INTERNAL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request) }}",
+        "options": {
+          "timeout": 1500000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Chỉ chạy khi JSON phán quyết lỗi",
+      "notesInFlow": true
+    },
+    {
+      "id": "a26b7f05-57e6-5846-a984-3f6bc98efbe0",
+      "name": "Trọng tài: Đọc phán quyết (lần 2)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        520
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Sinh tự động từ n8n/src/code/judge_parse2.js — sửa file nguồn rồi chạy \"npm run build:workflow\".\n// ===== Thư viện dùng chung (được chèn vào đầu mỗi Code node khi build workflow) =====\nconst MAX_TEXT_CHARS = 24000; // giới hạn độ dài mỗi văn bản đưa vào prompt (kiểm soát chi phí)\n\nfunction clip(text, max = MAX_TEXT_CHARS) {\n  const t = String(text || '').trim();\n  return t.length > max ? t.slice(0, max) + '\\n\\n[…đã cắt bớt do quá dài…]' : t;\n}\n\nfunction problemBlock(input) {\n  let s = `### VẤN ĐỀ CẦN GIẢI QUYẾT\\n${clip(input.problem, 8000)}\\n`;\n  if (input.context) s += `\\n### BỐI CẢNH\\n${clip(input.context, 8000)}\\n`;\n  if (input.goals) s += `\\n### MỤC TIÊU\\n${clip(input.goals, 4000)}\\n`;\n  if (input.constraints) s += `\\n### RÀNG BUỘC\\n${clip(input.constraints, 4000)}\\n`;\n  s += `\\n### TIÊU CHÍ ĐÁNH GIÁ (trọng số)\\n`;\n  for (const c of input.criteria || []) s += `- ${c.name} (${c.weight})${c.description ? `: ${c.description}` : ''}\\n`;\n  return s;\n}\n\nfunction debaterSystem(side, label) {\n  return [\n    `Bạn là ${label}, đóng vai \"Bên ${side}\" trong một cuộc tranh luận có cấu trúc giữa hai AI nhằm tìm ra giải pháp tốt nhất cho một vấn đề thực tế.`,\n    'Quy tắc:',\n    '- Luôn viết bằng tiếng Việt chuẩn, rõ ràng, dùng Markdown (tiêu đề ##, gạch đầu dòng, bảng khi phù hợp).',\n    '- Lập luận dựa trên logic và bằng chứng; nêu rõ giả định. Không bịa số liệu, nguồn hay trích dẫn; nếu là ước tính, ghi rõ \"ước tính\".',\n    '- Thẳng thắn nhưng tôn trọng; công nhận điểm đúng của đối phương, chỉ ra điểm sai bằng lý lẽ cụ thể.',\n    '- Đề xuất phải khả thi, có bước hành động cụ thể, phù hợp ràng buộc người dùng đưa ra.',\n    '- Viết súc tích: tối đa khoảng 1.200 từ.',\n  ].join('\\n');\n}\n\nfunction llmRequest(state, { round, role, stage, system, prompt }) {\n  return { request: { sessionId: state.sessionId, round, role, stage, system, prompt } };\n}\n\n// Kiểm tra kết quả từ gateway; ném lỗi tiếng Việt để Error Workflow báo về ứng dụng.\nfunction assertOk(results, stageLabel) {\n  for (const r of results) {\n    if (!r || r.ok !== true) {\n      const msg = (r && r.error && (r.error.message || r.error)) || 'Không nhận được phản hồi từ gateway';\n      throw new Error(`${stageLabel}: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);\n    }\n  }\n  return results;\n}\n\nfunction byRole(results) {\n  const out = {};\n  for (const r of results) out[r.role] = r;\n  return out;\n}\n\nfunction callSummary(r) {\n  return { round: r.round, role: r.role, model: r.model, provider: r.provider, usage: r.usage, costUsd: r.costUsd, attempts: r.attempts, latencyMs: r.latencyMs };\n}\n\nconst OTHER = { A: 'B', B: 'A' };\n\n// Trích JSON từ văn bản trả về của trọng tài (chịu được ```json fences, chữ thừa, dấu phẩy cuối).\nfunction extractJson(text) {\n  if (!text) return null;\n  let s = String(text).trim();\n  const fence = s.match(/```(?:json)?\\s*([\\s\\S]*?)```/i);\n  if (fence) s = fence[1].trim();\n  const start = s.indexOf('{');\n  const end = s.lastIndexOf('}');\n  if (start < 0 || end <= start) return null;\n  s = s.slice(start, end + 1);\n  const attempts = [s, s.replace(/,\\s*([}\\]])/g, '$1')];\n  for (const a of attempts) {\n    try {\n      const v = JSON.parse(a);\n      if (v && typeof v === 'object') return v;\n    } catch (e) { /* thử cách khác */ }\n  }\n  return null;\n}\n\nfunction num(v) {\n  const n = Number(v);\n  return Number.isFinite(n) ? n : null;\n}\n\n// Chuẩn hóa phán quyết & tính điểm có trọng số (0–100) một cách xác định, không phụ thuộc LLM.\nfunction normalizeJudge(j, criteria) {\n  const problems = [];\n  if (!j || typeof j !== 'object') return { valid: false, problems: ['Không phải JSON object'] };\n  const scores = { A: [], B: [] };\n  for (const side of ['A', 'B']) {\n    const arr = (j.scores && Array.isArray(j.scores[side])) ? j.scores[side] : [];\n    for (const c of criteria) {\n      const found = arr.find((x) => x && String(x.criterion || '').trim().toLowerCase() === c.name.toLowerCase())\n        || arr[criteria.indexOf(c)];\n      let s = found ? num(found.score) : null;\n      if (s === null) problems.push(`Thiếu điểm \"${c.name}\" cho Bên ${side}`);\n      else s = Math.max(0, Math.min(10, s));\n      scores[side].push({ criterion: c.name, weight: c.weight, score: s, comment: found ? String(found.comment || '') : '' });\n    }\n  }\n  const totalWeight = criteria.reduce((a, c) => a + c.weight, 0) || 1;\n  const weighted = {};\n  for (const side of ['A', 'B']) {\n    weighted[side] = Math.round((scores[side].reduce((a, x) => a + (x.score || 0) * x.weight, 0) / totalWeight) * 10 * 10) / 10;\n  }\n  let decision = String(j.decision || '').toUpperCase().trim();\n  if (['COMBINE', 'KET_HOP', 'KẾT HỢP', 'HYBRID'].includes(decision)) decision = 'COMBINE';\n  if (!['A', 'B', 'COMBINE'].includes(decision)) { problems.push('decision phải là A, B hoặc COMBINE'); decision = null; }\n  const arr = (v) => (Array.isArray(v) ? v : []);\n  const out = {\n    summary: String(j.summary || ''),\n    scores, weighted,\n    decision,\n    decisionRationale: String(j.decisionRationale || ''),\n    finalSolution: String(j.finalSolution || ''),\n    comparison: arr(j.comparison),\n    strengths: { A: arr(j.strengths && j.strengths.A), B: arr(j.strengths && j.strengths.B) },\n    weaknesses: { A: arr(j.weaknesses && j.weaknesses.A), B: arr(j.weaknesses && j.weaknesses.B) },\n    unresolvedDisagreements: arr(j.unresolvedDisagreements),\n    risks: arr(j.risks),\n    actionPlan: arr(j.actionPlan),\n    confidence: num(j.confidence),\n  };\n  if (!out.summary) problems.push('Thiếu summary');\n  if (!out.finalSolution) problems.push('Thiếu finalSolution');\n  return { valid: problems.length === 0 && decision !== null, problems, judge: out };\n}\n\nconst JUDGE_SCHEMA_HINT = `{\n  \"summary\": \"Tóm tắt 3-5 câu về cuộc tranh luận và kết luận\",\n  \"scores\": {\n    \"A\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ],\n    \"B\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ]\n  },\n  \"decision\": \"A\" | \"B\" | \"COMBINE\",\n  \"decisionRationale\": \"Vì sao chọn/kết hợp như vậy\",\n  \"finalSolution\": \"Giải pháp cuối cùng được khuyến nghị (Markdown, chi tiết, có các bước)\",\n  \"comparison\": [ { \"aspect\": \"Khía cạnh so sánh\", \"A\": \"…\", \"B\": \"…\", \"better\": \"A|B|Ngang nhau\" } ],\n  \"strengths\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"weaknesses\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"unresolvedDisagreements\": [ { \"issue\": \"…\", \"positionA\": \"…\", \"positionB\": \"…\", \"judgeView\": \"…\", \"howToResolve\": \"Cần dữ liệu/thử nghiệm gì để phân xử\" } ],\n  \"risks\": [ { \"risk\": \"…\", \"severity\": \"Cao|Trung bình|Thấp\", \"likelihood\": \"Cao|Trung bình|Thấp\", \"mitigation\": \"…\" } ],\n  \"actionPlan\": [ { \"step\": 1, \"action\": \"…\", \"owner\": \"…\", \"timeline\": \"…\", \"kpi\": \"…\" } ],\n  \"confidence\": 0-100\n}`;\n\nfunction mdCell(v) {\n  return String(v === undefined || v === null ? '' : v).replace(/\\|/g, '\\\\|').replace(/\\r?\\n+/g, '<br>');\n}\n// ===== Hết thư viện =====\n\n// ===== judge_parse2.js =====\nconst prev = $('Trọng tài: Đọc phán quyết').first().json;\nconst state = JSON.parse(JSON.stringify(prev.state));\nconst r = assertOk([$input.first().json], 'Trọng tài (sửa JSON)')[0];\nstate.calls.push(callSummary(r));\nconst parsed = normalizeJudge(extractJson(r.text), state.input.criteria);\nif (parsed.valid) return [{ json: { state, judgeRaw: r.text, valid: true, problems: [], judge: parsed.judge } }];\n// Vẫn chưa hợp lệ: dùng phần đọc được tốt nhất, báo cáo sẽ hiển thị cảnh báo.\nreturn [{ json: { state, judgeRaw: prev.judgeRaw, valid: false, problems: parsed.problems, judge: parsed.judge || prev.judge || null } }];\n"
+      }
+    },
+    {
+      "id": "57f08b40-63f6-5bc6-ab50-18f502ed077f",
+      "name": "Lập báo cáo tiếng Việt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Sinh tự động từ n8n/src/code/report.js — sửa file nguồn rồi chạy \"npm run build:workflow\".\n// ===== Thư viện dùng chung (được chèn vào đầu mỗi Code node khi build workflow) =====\nconst MAX_TEXT_CHARS = 24000; // giới hạn độ dài mỗi văn bản đưa vào prompt (kiểm soát chi phí)\n\nfunction clip(text, max = MAX_TEXT_CHARS) {\n  const t = String(text || '').trim();\n  return t.length > max ? t.slice(0, max) + '\\n\\n[…đã cắt bớt do quá dài…]' : t;\n}\n\nfunction problemBlock(input) {\n  let s = `### VẤN ĐỀ CẦN GIẢI QUYẾT\\n${clip(input.problem, 8000)}\\n`;\n  if (input.context) s += `\\n### BỐI CẢNH\\n${clip(input.context, 8000)}\\n`;\n  if (input.goals) s += `\\n### MỤC TIÊU\\n${clip(input.goals, 4000)}\\n`;\n  if (input.constraints) s += `\\n### RÀNG BUỘC\\n${clip(input.constraints, 4000)}\\n`;\n  s += `\\n### TIÊU CHÍ ĐÁNH GIÁ (trọng số)\\n`;\n  for (const c of input.criteria || []) s += `- ${c.name} (${c.weight})${c.description ? `: ${c.description}` : ''}\\n`;\n  return s;\n}\n\nfunction debaterSystem(side, label) {\n  return [\n    `Bạn là ${label}, đóng vai \"Bên ${side}\" trong một cuộc tranh luận có cấu trúc giữa hai AI nhằm tìm ra giải pháp tốt nhất cho một vấn đề thực tế.`,\n    'Quy tắc:',\n    '- Luôn viết bằng tiếng Việt chuẩn, rõ ràng, dùng Markdown (tiêu đề ##, gạch đầu dòng, bảng khi phù hợp).',\n    '- Lập luận dựa trên logic và bằng chứng; nêu rõ giả định. Không bịa số liệu, nguồn hay trích dẫn; nếu là ước tính, ghi rõ \"ước tính\".',\n    '- Thẳng thắn nhưng tôn trọng; công nhận điểm đúng của đối phương, chỉ ra điểm sai bằng lý lẽ cụ thể.',\n    '- Đề xuất phải khả thi, có bước hành động cụ thể, phù hợp ràng buộc người dùng đưa ra.',\n    '- Viết súc tích: tối đa khoảng 1.200 từ.',\n  ].join('\\n');\n}\n\nfunction llmRequest(state, { round, role, stage, system, prompt }) {\n  return { request: { sessionId: state.sessionId, round, role, stage, system, prompt } };\n}\n\n// Kiểm tra kết quả từ gateway; ném lỗi tiếng Việt để Error Workflow báo về ứng dụng.\nfunction assertOk(results, stageLabel) {\n  for (const r of results) {\n    if (!r || r.ok !== true) {\n      const msg = (r && r.error && (r.error.message || r.error)) || 'Không nhận được phản hồi từ gateway';\n      throw new Error(`${stageLabel}: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);\n    }\n  }\n  return results;\n}\n\nfunction byRole(results) {\n  const out = {};\n  for (const r of results) out[r.role] = r;\n  return out;\n}\n\nfunction callSummary(r) {\n  return { round: r.round, role: r.role, model: r.model, provider: r.provider, usage: r.usage, costUsd: r.costUsd, attempts: r.attempts, latencyMs: r.latencyMs };\n}\n\nconst OTHER = { A: 'B', B: 'A' };\n\n// Trích JSON từ văn bản trả về của trọng tài (chịu được ```json fences, chữ thừa, dấu phẩy cuối).\nfunction extractJson(text) {\n  if (!text) return null;\n  let s = String(text).trim();\n  const fence = s.match(/```(?:json)?\\s*([\\s\\S]*?)```/i);\n  if (fence) s = fence[1].trim();\n  const start = s.indexOf('{');\n  const end = s.lastIndexOf('}');\n  if (start < 0 || end <= start) return null;\n  s = s.slice(start, end + 1);\n  const attempts = [s, s.replace(/,\\s*([}\\]])/g, '$1')];\n  for (const a of attempts) {\n    try {\n      const v = JSON.parse(a);\n      if (v && typeof v === 'object') return v;\n    } catch (e) { /* thử cách khác */ }\n  }\n  return null;\n}\n\nfunction num(v) {\n  const n = Number(v);\n  return Number.isFinite(n) ? n : null;\n}\n\n// Chuẩn hóa phán quyết & tính điểm có trọng số (0–100) một cách xác định, không phụ thuộc LLM.\nfunction normalizeJudge(j, criteria) {\n  const problems = [];\n  if (!j || typeof j !== 'object') return { valid: false, problems: ['Không phải JSON object'] };\n  const scores = { A: [], B: [] };\n  for (const side of ['A', 'B']) {\n    const arr = (j.scores && Array.isArray(j.scores[side])) ? j.scores[side] : [];\n    for (const c of criteria) {\n      const found = arr.find((x) => x && String(x.criterion || '').trim().toLowerCase() === c.name.toLowerCase())\n        || arr[criteria.indexOf(c)];\n      let s = found ? num(found.score) : null;\n      if (s === null) problems.push(`Thiếu điểm \"${c.name}\" cho Bên ${side}`);\n      else s = Math.max(0, Math.min(10, s));\n      scores[side].push({ criterion: c.name, weight: c.weight, score: s, comment: found ? String(found.comment || '') : '' });\n    }\n  }\n  const totalWeight = criteria.reduce((a, c) => a + c.weight, 0) || 1;\n  const weighted = {};\n  for (const side of ['A', 'B']) {\n    weighted[side] = Math.round((scores[side].reduce((a, x) => a + (x.score || 0) * x.weight, 0) / totalWeight) * 10 * 10) / 10;\n  }\n  let decision = String(j.decision || '').toUpperCase().trim();\n  if (['COMBINE', 'KET_HOP', 'KẾT HỢP', 'HYBRID'].includes(decision)) decision = 'COMBINE';\n  if (!['A', 'B', 'COMBINE'].includes(decision)) { problems.push('decision phải là A, B hoặc COMBINE'); decision = null; }\n  const arr = (v) => (Array.isArray(v) ? v : []);\n  const out = {\n    summary: String(j.summary || ''),\n    scores, weighted,\n    decision,\n    decisionRationale: String(j.decisionRationale || ''),\n    finalSolution: String(j.finalSolution || ''),\n    comparison: arr(j.comparison),\n    strengths: { A: arr(j.strengths && j.strengths.A), B: arr(j.strengths && j.strengths.B) },\n    weaknesses: { A: arr(j.weaknesses && j.weaknesses.A), B: arr(j.weaknesses && j.weaknesses.B) },\n    unresolvedDisagreements: arr(j.unresolvedDisagreements),\n    risks: arr(j.risks),\n    actionPlan: arr(j.actionPlan),\n    confidence: num(j.confidence),\n  };\n  if (!out.summary) problems.push('Thiếu summary');\n  if (!out.finalSolution) problems.push('Thiếu finalSolution');\n  return { valid: problems.length === 0 && decision !== null, problems, judge: out };\n}\n\nconst JUDGE_SCHEMA_HINT = `{\n  \"summary\": \"Tóm tắt 3-5 câu về cuộc tranh luận và kết luận\",\n  \"scores\": {\n    \"A\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ],\n    \"B\": [ { \"criterion\": \"<tên tiêu chí y nguyên>\", \"score\": 0-10, \"comment\": \"lý do chấm\" } ]\n  },\n  \"decision\": \"A\" | \"B\" | \"COMBINE\",\n  \"decisionRationale\": \"Vì sao chọn/kết hợp như vậy\",\n  \"finalSolution\": \"Giải pháp cuối cùng được khuyến nghị (Markdown, chi tiết, có các bước)\",\n  \"comparison\": [ { \"aspect\": \"Khía cạnh so sánh\", \"A\": \"…\", \"B\": \"…\", \"better\": \"A|B|Ngang nhau\" } ],\n  \"strengths\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"weaknesses\": { \"A\": [\"…\"], \"B\": [\"…\"] },\n  \"unresolvedDisagreements\": [ { \"issue\": \"…\", \"positionA\": \"…\", \"positionB\": \"…\", \"judgeView\": \"…\", \"howToResolve\": \"Cần dữ liệu/thử nghiệm gì để phân xử\" } ],\n  \"risks\": [ { \"risk\": \"…\", \"severity\": \"Cao|Trung bình|Thấp\", \"likelihood\": \"Cao|Trung bình|Thấp\", \"mitigation\": \"…\" } ],\n  \"actionPlan\": [ { \"step\": 1, \"action\": \"…\", \"owner\": \"…\", \"timeline\": \"…\", \"kpi\": \"…\" } ],\n  \"confidence\": 0-100\n}`;\n\nfunction mdCell(v) {\n  return String(v === undefined || v === null ? '' : v).replace(/\\|/g, '\\\\|').replace(/\\r?\\n+/g, '<br>');\n}\n// ===== Hết thư viện =====\n\n// ===== report.js =====\n// Lập báo cáo cuối cùng bằng tiếng Việt (Markdown) từ phán quyết + toàn bộ diễn biến.\nconst { state, judge, valid, problems, judgeRaw } = $input.first().json;\nconst P = state.participants;\nconst nameA = `Phương án A — ${P.A.label}`;\nconst nameB = `Phương án B — ${P.B.label}`;\nconst fmt = (n, d = 1) => (n === null || n === undefined ? '—' : Number(n).toFixed(d));\nconst usd = (n) => `$${Number(n || 0).toFixed(4)}`;\nconst int = (n) => Number(n || 0).toLocaleString('vi-VN');\nconst list = (arr) => (arr && arr.length ? arr.map((x) => `- ${typeof x === 'string' ? x : JSON.stringify(x)}`).join('\\n') : '- (không có)');\nconst now = new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });\n\nconst DECISION_VI = {\n  A: `Chọn **${nameA}**`,\n  B: `Chọn **${nameB}**`,\n  COMBINE: `**Kết hợp** hai phương án A (${P.A.label}) và B (${P.B.label})`,\n};\n\nlet md = `# Báo cáo tranh luận AI: ${state.title}\\n\\n`;\nmd += `> Lập lúc ${now} · Mã phiên \\`${state.sessionId}\\`\\n>\\n`;\nmd += `> Bên A: **${P.A.label}** (\\`${P.A.model}\\`) · Bên B: **${P.B.label}** (\\`${P.B.model}\\`) · Trọng tài: **${P.judge.label}** (\\`${P.judge.model}\\`)\\n\\n`;\n\nif (!valid) {\n  md += `> ⚠️ **Cảnh báo:** phán quyết của trọng tài chưa đầy đủ/đúng định dạng (${(problems || []).join('; ')}). Các mục bị thiếu được để trống; xem phán quyết gốc ở cuối báo cáo.\\n\\n`;\n}\n\nconst j = judge || { scores: { A: [], B: [] }, weighted: {}, strengths: {}, weaknesses: {} };\n\n// 1. Tóm tắt điều hành\nmd += `## 1. Tóm tắt điều hành\\n\\n`;\nmd += `| Hạng mục | Kết quả |\\n|---|---|\\n`;\nmd += `| Quyết định của trọng tài | ${j.decision ? DECISION_VI[j.decision] : '—'} |\\n`;\nmd += `| Điểm có trọng số — A (${P.A.label}) | **${fmt(j.weighted && j.weighted.A)} / 100** |\\n`;\nmd += `| Điểm có trọng số — B (${P.B.label}) | **${fmt(j.weighted && j.weighted.B)} / 100** |\\n`;\nmd += `| Độ tin cậy của trọng tài | ${j.confidence === null || j.confidence === undefined ? '—' : `${fmt(j.confidence, 0)}%`} |\\n\\n`;\nif (j.summary) md += `${j.summary}\\n\\n`;\n\n// 2. Bảng điểm\nmd += `## 2. Bảng điểm theo tiêu chí (thang 0–10)\\n\\n`;\nmd += `| Tiêu chí | Trọng số | A | B | Nhận xét về A | Nhận xét về B |\\n|---|---:|---:|---:|---|---|\\n`;\nconst crit = state.input.criteria;\ncrit.forEach((c, i) => {\n  const a = (j.scores.A || [])[i] || {};\n  const b = (j.scores.B || [])[i] || {};\n  md += `| ${mdCell(c.name)} | ${c.weight} | ${fmt(a.score)} | ${fmt(b.score)} | ${mdCell(a.comment)} | ${mdCell(b.comment)} |\\n`;\n});\nmd += `| **Điểm có trọng số (/100)** | ${crit.reduce((s, c) => s + c.weight, 0)} | **${fmt(j.weighted && j.weighted.A)}** | **${fmt(j.weighted && j.weighted.B)}** | | |\\n\\n`;\nmd += `_Điểm có trọng số = Σ(điểm × trọng số) ÷ Σ trọng số × 10, do hệ thống tự tính từ điểm từng tiêu chí của trọng tài._\\n\\n`;\n\n// 3. So sánh\nmd += `## 3. Bảng so sánh hai phương án\\n\\n`;\nif (j.comparison && j.comparison.length) {\n  md += `| Khía cạnh | Phương án A | Phương án B | Tốt hơn |\\n|---|---|---|---|\\n`;\n  for (const r of j.comparison) md += `| ${mdCell(r.aspect)} | ${mdCell(r.A)} | ${mdCell(r.B)} | ${mdCell(r.better)} |\\n`;\n  md += '\\n';\n} else md += '_Trọng tài không cung cấp bảng so sánh._\\n\\n';\n\n// 4. Lập luận\nmd += `## 4. Lập luận của trọng tài\\n\\n${j.decisionRationale || '_(không có)_'}\\n\\n`;\nmd += `### Điểm mạnh / điểm yếu\\n\\n`;\nmd += `**A — ${P.A.label}**\\n\\n_Điểm mạnh:_\\n${list(j.strengths && j.strengths.A)}\\n\\n_Điểm yếu:_\\n${list(j.weaknesses && j.weaknesses.A)}\\n\\n`;\nmd += `**B — ${P.B.label}**\\n\\n_Điểm mạnh:_\\n${list(j.strengths && j.strengths.B)}\\n\\n_Điểm yếu:_\\n${list(j.weaknesses && j.weaknesses.B)}\\n\\n`;\n\n// 5. Giải pháp\nmd += `## 5. Giải pháp khuyến nghị cuối cùng\\n\\n${j.finalSolution ? String(j.finalSolution).replace(/^(#{1,2})\\s/gm, '### ') : '_(không có)_'}\\n\\n`;\n\n// 6. Bất đồng\nmd += `## 6. Bất đồng chưa được giải quyết\\n\\n`;\nif (j.unresolvedDisagreements && j.unresolvedDisagreements.length) {\n  md += `| Vấn đề | Quan điểm A | Quan điểm B | Nhận định trọng tài | Cách phân xử |\\n|---|---|---|---|---|\\n`;\n  for (const d of j.unresolvedDisagreements) md += `| ${mdCell(d.issue)} | ${mdCell(d.positionA)} | ${mdCell(d.positionB)} | ${mdCell(d.judgeView)} | ${mdCell(d.howToResolve)} |\\n`;\n  md += '\\n';\n} else md += '_Trọng tài không ghi nhận bất đồng còn tồn tại._\\n\\n';\n\n// 7. Rủi ro\nmd += `## 7. Rủi ro\\n\\n`;\nif (j.risks && j.risks.length) {\n  md += `| # | Rủi ro | Mức độ | Khả năng | Biện pháp giảm thiểu |\\n|---:|---|---|---|---|\\n`;\n  j.risks.forEach((r, i) => { md += `| ${i + 1} | ${mdCell(r.risk)} | ${mdCell(r.severity)} | ${mdCell(r.likelihood)} | ${mdCell(r.mitigation)} |\\n`; });\n  md += '\\n';\n} else md += '_(không có)_\\n\\n';\n\n// 8. Kế hoạch\nmd += `## 8. Kế hoạch hành động\\n\\n`;\nif (j.actionPlan && j.actionPlan.length) {\n  md += `| Bước | Hành động | Phụ trách | Thời hạn | Chỉ số thành công |\\n|---:|---|---|---|---|\\n`;\n  j.actionPlan.forEach((a, i) => { md += `| ${mdCell(a.step || i + 1)} | ${mdCell(a.action)} | ${mdCell(a.owner)} | ${mdCell(a.timeline)} | ${mdCell(a.kpi)} |\\n`; });\n  md += '\\n';\n} else md += '_(không có)_\\n\\n';\n\n// 9. Diễn biến\nmd += `## 9. Diễn biến tranh luận\\n\\n`;\nmd += `1. **Vòng 1 — Phân tích độc lập:** ${P.A.label} và ${P.B.label} phân tích riêng, không thấy kết quả của nhau.\\n`;\nmd += `2. **Vòng 2 — Phản biện chéo:** mỗi bên đọc phương án đối phương và phản biện chi tiết.\\n`;\nmd += `3. **Vòng 3 — Hoàn thiện:** mỗi bên tiếp thu/bác bỏ phản biện và chốt phương án cuối.\\n`;\nmd += `4. **Trọng tài:** ${P.judge.label} chấm điểm \"mù\" (không biết bên nào là model nào) theo ${crit.length} tiêu chí.\\n\\n`;\nmd += `_Toàn văn từng vòng có trong Phụ lục khi xuất Markdown/PDF và trong tab \"Diễn biến\" trên giao diện._\\n\\n`;\n\n// 10. Chi phí\nmd += `## 10. Token & chi phí API\\n\\n`;\nmd += `| Vòng | Vai trò | Model | Token vào (cache) | Token ra (suy luận) | Số lần thử | Chi phí |\\n|---:|---|---|---:|---:|---:|---:|\\n`;\nconst ROLE = { A: `A — ${P.A.label}`, B: `B — ${P.B.label}`, judge: `Trọng tài — ${P.judge.label}` };\nlet total = 0;\nfor (const c of state.calls) {\n  total += Number(c.costUsd || 0);\n  const u = c.usage || {};\n  md += `| ${c.round === 5 ? '4b' : c.round} | ${ROLE[c.role] || c.role} | \\`${c.model}\\` | ${int(u.inputTokens)} (${int(u.cachedInputTokens)}) | ${int(u.outputTokens)} (${int(u.reasoningTokens)}) | ${c.attempts || 1} | ${usd(c.costUsd)} |\\n`;\n}\nmd += `| | **Tổng cộng** | | | | | **${usd(total)}** |\\n\\n`;\n\nmd += `---\\n\\n_Báo cáo do AI tạo ra để hỗ trợ ra quyết định. Hãy kiểm chứng số liệu, giả định và tham khảo chuyên gia trước khi áp dụng cho quyết định quan trọng._\\n`;\n\nif (!valid && judgeRaw) md += `\\n### Phán quyết gốc của trọng tài\\n\\n\\`\\`\\`\\n${String(judgeRaw).slice(0, 20000)}\\n\\`\\`\\`\\n`;\n\nreturn [{ json: { sessionId: state.sessionId, reportMarkdown: md, judge: { ...j, valid, problems, totalCostUsd: Math.round(total * 1e6) / 1e6 } } }];\n"
+      }
+    },
+    {
+      "id": "2f26a82f-3a22-5d87-a3a2-6ed4a63f69fd",
+      "name": "Lưu báo cáo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4400,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.APP_INTERNAL_URL }}/internal/sessions/{{ encodeURIComponent($json.sessionId) }}/complete",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-internal-token",
+              "value": "={{ $env.DEBATE_INTERNAL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ reportMarkdown: $json.reportMarkdown, judge: $json.judge }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "Webhook: Nhận yêu cầu": {
+      "main": [
+        [
+          {
+            "node": "Kiểm tra token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kiểm tra token": {
+      "main": [
+        [
+          {
+            "node": "Bắt đầu phiên",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Bắt đầu phiên": {
+      "main": [
+        [
+          {
+            "node": "Vòng 1: Soạn đề bài",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vòng 1: Soạn đề bài": {
+      "main": [
+        [
+          {
+            "node": "Vòng 1: GPT & Claude phân tích",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vòng 1: GPT & Claude phân tích": {
+      "main": [
+        [
+          {
+            "node": "Vòng 1: Kiểm tra kết quả",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vòng 1: Kiểm tra kết quả": {
+      "main": [
+        [
+          {
+            "node": "Vòng 2: Soạn đề bài phản biện",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vòng 2: Soạn đề bài phản biện": {
+      "main": [
+        [
+          {
+            "node": "Vòng 2: GPT & Claude phản biện",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vòng 2: GPT & Claude phản biện": {
+      "main": [
+        [
+          {
+            "node": "Vòng 2: Kiểm tra kết quả",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vòng 2: Kiểm tra kết quả": {
+      "main": [
+        [
+          {
+            "node": "Vòng 3: Soạn đề bài hoàn thiện",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vòng 3: Soạn đề bài hoàn thiện": {
+      "main": [
+        [
+          {
+            "node": "Vòng 3: GPT & Claude hoàn thiện",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vòng 3: GPT & Claude hoàn thiện": {
+      "main": [
+        [
+          {
+            "node": "Vòng 3: Kiểm tra kết quả",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vòng 3: Kiểm tra kết quả": {
+      "main": [
+        [
+          {
+            "node": "Trọng tài: Soạn hồ sơ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trọng tài: Soạn hồ sơ": {
+      "main": [
+        [
+          {
+            "node": "Trọng tài: Muse đánh giá",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trọng tài: Muse đánh giá": {
+      "main": [
+        [
+          {
+            "node": "Trọng tài: Đọc phán quyết",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trọng tài: Đọc phán quyết": {
+      "main": [
+        [
+          {
+            "node": "JSON hợp lệ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JSON hợp lệ?": {
+      "main": [
+        [
+          {
+            "node": "Lập báo cáo tiếng Việt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Trọng tài: Yêu cầu sửa JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trọng tài: Yêu cầu sửa JSON": {
+      "main": [
+        [
+          {
+            "node": "Trọng tài: Muse sửa JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trọng tài: Muse sửa JSON": {
+      "main": [
+        [
+          {
+            "node": "Trọng tài: Đọc phán quyết (lần 2)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trọng tài: Đọc phán quyết (lần 2)": {
+      "main": [
+        [
+          {
+            "node": "Lập báo cáo tiếng Việt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lập báo cáo tiếng Việt": {
+      "main": [
+        [
+          {
+            "node": "Lưu báo cáo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "aiDebateErrorWf1",
+    "executionTimeout": 3600,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true,
+    "timezone": "Asia/Ho_Chi_Minh",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

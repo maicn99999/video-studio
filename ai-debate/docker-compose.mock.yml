@@ -1,0 +1,32 @@
+# Chạy thử TOÀN BỘ hệ thống bằng MOCK API (không cần API key, không tốn tiền).
+# Dùng:  docker compose -f docker-compose.yml -f docker-compose.mock.yml up -d --build postgres n8n app mock-llm
+# Mở:    http://localhost:3000
+# CẢNH BÁO: kết quả là văn bản giả lập, KHÔNG phải từ GPT/Claude/Muse thật.
+services:
+  mock-llm:
+    image: ai-debate-app:latest
+    build:
+      context: ./app
+      args:
+        WITH_PDF: ${WITH_PDF:-true}
+    command: ["node", "mock/server.js"]
+    environment:
+      MOCK_PORT: 4010
+    networks: [backend]
+
+  app:
+    environment:
+      LLM_MODE: mock
+      COOKIE_SECURE: "false"
+      OPENAI_API_KEY: mock-openai-key
+      ANTHROPIC_API_KEY: mock-anthropic-key
+      META_API_KEY: mock-meta-key
+      OPENAI_BASE_URL: http://mock-llm:4010/openai/v1
+      ANTHROPIC_BASE_URL: http://mock-llm:4010/anthropic
+      META_BASE_URL: http://mock-llm:4010/meta/v1
+      LLM_TIMEOUT_MS: 5000
+      LLM_BACKOFF_BASE_MS: 200
+    ports:
+      - "${APP_PORT_BIND:-127.0.0.1:3000}:3000"
+    depends_on:
+      mock-llm: { condition: service_started }

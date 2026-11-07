@@ -1,0 +1,20 @@
+# Caddy tự xin & gia hạn chứng chỉ HTTPS (Let's Encrypt / ZeroSSL) cho APP_DOMAIN.
+{$APP_DOMAIN} {
+	encode zstd gzip
+
+	# API nội bộ (n8n -> app) không bao giờ được mở ra Internet
+	@internal path /internal/*
+	respond @internal 404
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	reverse_proxy app:3000 {
+		# Xuất PDF có thể mất vài giây
+		transport http {
+			read_timeout 5m
+		}
+	}
+}

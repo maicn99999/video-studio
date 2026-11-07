@@ -1,0 +1,74 @@
+{
+  "id": "aiDebateErrorWf1",
+  "name": "AI Debate — Xử lý lỗi",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "b8f8fe44-ede9-558c-ad56-341aa8e8ac8a",
+      "name": "Khi workflow AI Debate lỗi",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "4ea4b0a1-e50d-5890-acc2-d609f7b2702f",
+      "name": "Báo lỗi về ứng dụng",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.APP_INTERNAL_URL }}/internal/n8n-error",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-internal-token",
+              "value": "={{ $env.DEBATE_INTERNAL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ executionId: $json.execution && $json.execution.id, message: ($json.execution && $json.execution.error && $json.execution.error.message) || \"Workflow n8n thất bại\", node: $json.execution && $json.execution.lastNodeExecuted }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "Khi workflow AI Debate lỗi": {
+      "main": [
+        [
+          {
+            "node": "Báo lỗi về ứng dụng",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

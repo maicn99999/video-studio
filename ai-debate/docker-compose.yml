@@ -1,0 +1,161 @@
+# AI Debate — triển khai production trên VPS.
+# Khởi động:  docker compose up -d --build
+# Mọi secret/API key đọc từ file .env (không commit file này lên Git).
+name: ai-debate
+
+x-restart: &restart
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "5" }
+
+services:
+  postgres:
+    <<: *restart
+    image: ${POSTGRES_IMAGE:-postgres:17-alpine}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-n8n}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Thiếu POSTGRES_PASSWORD trong .env}
+      POSTGRES_DB: n8n
+      APP_DB_USER: ${APP_DB_USER:-debate}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Thiếu APP_DB_PASSWORD trong .env}
+      APP_DB_NAME: ${APP_DB_NAME:-debate}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d n8n"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [backend]
+
+  n8n:
+    <<: *restart
+    image: n8nio/n8n:${N8N_VERSION:-2.46.6}
+    entrypoint: ["tini", "--", "/bin/sh", "/init/entrypoint.sh"]
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-n8n}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?Thiếu N8N_ENCRYPTION_KEY trong .env}
+      # Giao diện n8n chỉ mở trên 127.0.0.1 của VPS (truy cập qua SSH tunnel) — xem docs/DEPLOY.md
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_LISTEN_ADDRESS: 0.0.0.0
+      N8N_PROTOCOL: http
+      N8N_SECURE_COOKIE: "false"
+      N8N_WEBHOOK_URL: http://n8n:5678/
+      GENERIC_TIMEZONE: ${TZ:-Asia/Ho_Chi_Minh}
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+      # Workflow dùng $env.APP_INTERNAL_URL và $env.DEBATE_INTERNAL_TOKEN trong biểu thức HTTP.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      APP_INTERNAL_URL: http://app:3000
+      DEBATE_INTERNAL_TOKEN: ${DEBATE_INTERNAL_TOKEN:?Thiếu DEBATE_INTERNAL_TOKEN trong .env}
+      N8N_AUTO_IMPORT: ${N8N_AUTO_IMPORT:-true}
+      N8N_CONCURRENCY_PRODUCTION_LIMIT: ${N8N_CONCURRENCY_PRODUCTION_LIMIT:-4}
+      EXECUTIONS_TIMEOUT: 3600
+      EXECUTIONS_TIMEOUT_MAX: 7200
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: 336
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_RUNNERS_TASK_TIMEOUT: 300
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro
+      - ./n8n/init:/init:ro
+    ports:
+      - "${N8N_PORT_BIND:-127.0.0.1:5678}:5678"
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5678/healthz >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    networks: [backend]
+
+  app:
+    <<: *restart
+    build:
+      context: ./app
+      args:
+        WITH_PDF: ${WITH_PDF:-true}
+    image: ai-debate-app:latest
+    init: true
+    environment:
+      PORT: 3000
+      APP_PUBLIC_URL: https://${APP_DOMAIN:-localhost}
+      STORAGE: postgres
+      DATABASE_URL: postgres://${APP_DB_USER:-debate}:${APP_DB_PASSWORD}@postgres:5432/${APP_DB_NAME:-debate}
+      APP_PASSWORD: ${APP_PASSWORD:?Thiếu APP_PASSWORD trong .env}
+      SESSION_SECRET: ${SESSION_SECRET:?Thiếu SESSION_SECRET trong .env}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      DEBATE_INTERNAL_TOKEN: ${DEBATE_INTERNAL_TOKEN}
+      N8N_WEBHOOK_URL: http://n8n:5678/webhook/ai-debate
+      LLM_MODE: ${LLM_MODE:-live}
+      # --- API key: đặt trong .env, hoặc dùng *_FILE trỏ tới Docker secret (xem README)
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      META_API_KEY: ${META_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-6-sol}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-5-5}
+      META_MODEL: ${META_MODEL:-muse-wonder-1.0}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
+      META_BASE_URL: ${META_BASE_URL:-https://api.meta.ai/v1}
+      META_API_STYLE: ${META_API_STYLE:-responses}
+      OPENAI_REASONING_EFFORT: ${OPENAI_REASONING_EFFORT:-high}
+      ANTHROPIC_EFFORT: ${ANTHROPIC_EFFORT:-high}
+      META_REASONING_EFFORT: ${META_REASONING_EFFORT:-high}
+      ANTHROPIC_REFUSAL_FALLBACK: ${ANTHROPIC_REFUSAL_FALLBACK:-true}
+      # --- Giới hạn chi phí (USD)
+      MAX_COST_PER_SESSION_USD: ${MAX_COST_PER_SESSION_USD:-3}
+      MAX_COST_PER_DAY_USD: ${MAX_COST_PER_DAY_USD:-15}
+      MAX_COST_PER_MONTH_USD: ${MAX_COST_PER_MONTH_USD:-100}
+      MAX_CONCURRENT_DEBATES: ${MAX_CONCURRENT_DEBATES:-2}
+      DEBATE_MAX_OUTPUT_TOKENS: ${DEBATE_MAX_OUTPUT_TOKENS:-16000}
+      JUDGE_MAX_OUTPUT_TOKENS: ${JUDGE_MAX_OUTPUT_TOKENS:-20000}
+      # --- Retry / timeout
+      LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-600000}
+      LLM_CALL_DEADLINE_MS: ${LLM_CALL_DEADLINE_MS:-1200000}
+      LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-4}
+      LLM_MAX_CONCURRENCY_PER_PROVIDER: ${LLM_MAX_CONCURRENCY_PER_PROVIDER:-4}
+      SESSION_TIMEOUT_MIN: ${SESSION_TIMEOUT_MIN:-60}
+      PRICE_OVERRIDES_JSON: ${PRICE_OVERRIDES_JSON:-}
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [backend, web]
+
+  caddy:
+    <<: *restart
+    image: caddy:2-alpine
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?Thiếu APP_DOMAIN trong .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [app]
+    networks: [web]
+
+volumes:
+  pgdata:
+  n8n_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  backend:
+  web:
