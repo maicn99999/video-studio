@@ -47,7 +47,7 @@ Bạn nhập **một vấn đề** bằng tiếng Việt → hệ thống tự c
 | 28 unit test (giá, retry, timeout, rate limit, schema request/response, cấu hình, bảo mật) | ✅ đạt |
 | 18 test tích hợp: app + gateway + **workflow JSON thật** (chạy bằng bộ thông dịch mini) + **mock API** | ✅ đạt |
 | 6 bước E2E trên Docker: **n8n 2.46.6 thật** + Postgres + app + **mock API** (luồng đầy đủ, 429/500 retry, sửa JSON trọng tài, Error Workflow) | ✅ đạt |
-| Gọi **API thật** của OpenAI / Anthropic / Google | ❌ **CHƯA kiểm thử** — chưa có API key. Mọi kiểm thử ở trên dùng **mock server** mô phỏng đúng schema tài liệu. |
+| Gọi **API thật** của OpenAI / Anthropic / Google | ✅ **Đã chạy 1 phiên thật** ngày 08/11/2026 (n8n 2.46.6 + Postgres 17): 7/7 lượt thành công ở lần thử đầu, trọng tài trả JSON hợp lệ ngay, tổng chi phí ước tính **$0,95**, khoảng 9 phút. Báo cáo: [reports/](reports/). Mới thử 1 phiên — các nhánh lỗi (429, timeout, refusal…) chỉ được kiểm thử bằng mock. |
 
 Lần chạy đầu tiên với key thật, hãy làm theo mục **"Kiểm tra lần đầu với API thật"** trong [docs/DEPLOY.md](docs/DEPLOY.md#9-kiểm-tra-lần-đầu-với-api-thật). Chi tiết những gì đã/chưa xác thực trong tài liệu API: [docs/API-VERIFICATION.md](docs/API-VERIFICATION.md).
 

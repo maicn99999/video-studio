@@ -4,6 +4,13 @@ Ngày kiểm tra: **07/11/2026**. Trong môi trường phát triển, mạng b�
 
 Dự án đã chuyển trọng tài sang **Google Gemini** (08/11/2026); mục Meta cũ đã được gỡ.
 
+**Chạy thật ngày 08/11/2026** (1 phiên tranh luận, 7 lượt gọi, tất cả thành công ở lần thử đầu):
+- OpenAI `gpt-6-sol` qua Responses API: request/response đúng như mô tả; `usage.output_tokens_details.reasoning_tokens` có giá trị (vd. 2.588).
+- Anthropic `claude-opus-5-5` qua Messages API (`anthropic-version: 2026-10-21`, adaptive thinking, `effort: high`, `fallbacks: "default"`): chạy tốt. Lưu ý: usage của Anthropic không tách token suy luận (đã nằm trong `output_tokens`) nên cột "suy luận" của Claude hiển thị 0.
+- Google `gemini-4-argon` qua generateContent (`x-goog-api-key`, `thinkingLevel: high`, `responseMimeType: application/json`): chạy tốt, trả JSON hợp lệ ngay; `thoughtsTokenCount` có giá trị. Endpoint models cho biết `outputTokenLimit` = **32.768** (không phải 65.536 như trích đoạn tài liệu) — `JUDGE_MAX_OUTPUT_TOKENS` phải ≤ 32.768.
+- Thời gian: GPT 18–43 giây/lượt, Claude 57–99 giây/lượt, Gemini trọng tài 186 giây.
+- Chưa đối chiếu: chi phí ước tính ($0,95) với trang billing thật của 3 nhà cung cấp.
+
 Mức độ tin cậy: ✅ đã đối chiếu tài liệu chính thức · 🟡 theo trích đoạn tài liệu chính thức qua tìm kiếm, chưa đọc toàn văn · ⚠️ chỉ có nguồn bên thứ ba / chưa xác thực.
 
 ## OpenAI — GPT-6 Sol
