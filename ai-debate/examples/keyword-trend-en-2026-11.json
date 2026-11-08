@@ -1,0 +1,34 @@
+{
+  "title": "Keyword/chủ đề tiếng Anh view trung bình cao hoặc đang trend (YouTube, 11/2026)",
+  "problem": "Tìm và xếp hạng các keyword hoặc chủ đề video YouTube TIẾNG ANH có lượt xem trung bình cao hoặc đang trend, để chọn chủ đề sản xuất video trong 4–8 tuần tới (mọi ngách).\nYêu cầu đầu ra: (1) danh sách ưu tiên 10–15 keyword/chủ đề cụ thể, mỗi mục ghi rõ: định dạng (video dài/Shorts), lý do theo số liệu, góc tiếp cận/ý tưởng tiêu đề, mức độ cạnh tranh, độ bền xu hướng (nhất thời / theo mùa / evergreen); (2) quy trình lặp lại hằng tuần để tiếp tục tìm keyword trend bằng dữ liệu (YouTube Data API, vidIQ, Google Trends…), có ngưỡng chỉ số cụ thể để quyết định làm hay bỏ.\nLưu ý: số liệu thật từ vidIQ ở phần Bối cảnh; phải phân biệt rõ điều có bằng chứng và điều là suy đoán. Không bịa số liệu.",
+  "context": "DỮ LIỆU vidIQ ngày 08/11/2026 (ước tính của vidIQ; \"comp\" = cạnh tranh 0–100, thấp là dễ; VPH = view/giờ của video, KHÔNG phải nhu cầu tìm kiếm).\nA) Keyword tiếng Anh tăng tìm kiếm mạnh nhất 30 ngày (search/tháng | tăng | comp | thị trường chính):\ngloam 963k +27091% c33 (PK,IN,VN; VPH 26k) · conchaser 750k +7142% c30 · little family moments 426k +10239% c38 (IN,PK,BD) · south park gta 6 395k +10144% c60 (US,BR) · skylox story 338k c50 · lazy chill zone 288k +14301% c37 (US 16%) · okeanos history 277k +7253% c28 · one piece 1198 250k c32 (VPH 310k) · throw food for animals (roblox) 247k c70 (VPH 380k) · ronaldo retirement 264k c58 (VPH 340k) · rob run gameplay 160k c31 · history in minecraft 157k c44 · tds night 4 154k c36 · animated explainer shorts 149k c38 (IN 48%) · us election 2026 148k c53 · sleep theories 138k +7686% c56 · magna vs dante reaction 137k c19 · best practical basketball build 135k c39 (US 72%) · fm27 tactics 122k c27 (GB 68%) · how long would you survive in every era of earth? 118k c38 · free llm api claude setup 105k c33 (IN/BD/PK) · jet crash 129k c60 · trận bóng đá lớn (liverpool vs arsenal, chelsea vs man utd…) 120–270k c53–73.\nB) Top tìm kiếm tại Mỹ (search/tháng, US): mrbeast 4.56M · gta 6 2.54M · asmr 2.18M · sml 2.0M · roblox 1.95M · minecraft 1.87M · nba 1.67M · nfl 1.57M · fortnite 1.56M · music 1.52M · death battle 1.50M · lofi 1.17M · tesla roadster 1.17M · alex hormozi 1.0M · type beat 0.94M · gta 6 trailer 0.91M · my mix 0.91M.\nC) Keyword có VPH video tăng vọt (8/11): christmas phonk +22753% (VPH 7.1k) · mariah carey christmas (VPH 170k) · all i want for christmas is you · sleeping city funk · ai cat stories +48433% (VPH 100k) · angry birds 3 (VPH 490k) · stranger things the first shadow / intro · watch this before 2026 · happy new year video · fortnite free item shop / token · real madrid vs valencia (VPH 1.4M) · iem beijing 2026.\nD) Video dài tiếng Anh tăng nhanh nhất 2 tuần (VPH): highlight cricket IND vs NZ 460k · SNL post-midterm 362k · JerryRigEverything gaming phone 270k · Nick DiGiovanni \"$1 vs $10,000 Mystery Box\" 262k · Ryan Trahan \"I Stayed in Waterpark Hotels\" 180k · Brent Rivera \"Abandoned Movie Sets on Google Maps\" 171k · phim truyền hình Pakistan Eng Sub 150k · Jimmy Kimmel bình luận midterm 138k · Veritasium \"Closest Thing to Alien Matter\" (66 phút) 124k · \"10,000 Player Minecraft War\" (4 giờ) 114k · phim Nigeria 3 giờ 140k.\nE) Shorts tiếng Anh tăng nhanh nhất (VPH 300k–1.9M): khoảnh khắc em bé/gia đình, thú cưng cảm động, Ronaldo, bottle flip, gợi ý quà Giáng sinh, sonic papercraft, cosplay kpop demon hunters, mộc DIY, đức tin \"Jesus saves\" — nhiều kênh chỉ vài nghìn sub đạt 40–98M view.\nF) Video dài \"bùng nổ\" ở kênh nhỏ (<500k sub, tháng này): truyện kể AI dài 40–60 phút (\"A Billionaire Never Believed in Love Until His Cook…\", kênh 2.6k sub, 134k view, gắn nhãn AI) · parody \"Trump Reacts to the Midterms – Downfall\" 2.3M (kênh 11k sub) · \"GTA V Tribute\" 1.4M (1.6k sub) · video essay \"Why Young Men Think Anakin Was Right\" 492k (5.2k sub) · compilation Family Guy 2 giờ · so sánh điện thoại iPhone 18 · fan trailer Mass Effect 438k · nhạc Celtic (kênh Topic).\nNgười dùng có công cụ riêng tự động tạo music video; kênh hiện tại chưa xác định ngách.",
+  "goals": "- Chọn được 10–15 keyword/chủ đề tiếng Anh ưu tiên, mỗi cái có lý do dựa trên dữ liệu ở Bối cảnh.\n- Cân bằng giữa trend ngắn hạn (mùa Giáng sinh/Năm mới, sự kiện) và chủ đề evergreen có view trung bình cao.\n- Có quy trình hằng tuần, chỉ số và ngưỡng rõ ràng để lặp lại việc tìm keyword trend.",
+  "constraints": "- Nội dung tiếng Anh, khán giả quốc tế (ưu tiên US/UK/CA/AU nhưng chấp nhận IN/PK/PH).\n- Giả định: kênh nhỏ/mới, 1 người vận hành, có thể dùng công cụ tự động/AI để sản xuất; năng lực khoảng 3–5 video/tuần.\n- Phải tuân thủ chính sách YouTube (bản quyền, nội dung lặp lại/reused content, nhãn nội dung AI, nội dung trẻ em/COPPA), không re-upload nội dung của người khác.\n- Không có ngân sách quảng cáo trả phí.",
+  "criteria": [
+    {
+      "name": "Tiềm năng lượt xem",
+      "weight": 30,
+      "description": "Nhu cầu tìm kiếm / view trung bình / VPH theo dữ liệu"
+    },
+    {
+      "name": "Cơ hội cho kênh nhỏ",
+      "weight": 20,
+      "description": "Mức cạnh tranh thấp, có bằng chứng kênh nhỏ vẫn bùng nổ"
+    },
+    {
+      "name": "Độ bền xu hướng",
+      "weight": 15,
+      "description": "Evergreen hay nhất thời; thời điểm còn kịp làm"
+    },
+    {
+      "name": "Khả thi sản xuất & tuân thủ chính sách",
+      "weight": 20,
+      "description": "Làm được với 1 người + công cụ tự động; rủi ro bản quyền/chính sách thấp"
+    },
+    {
+      "name": "Bằng chứng & khả năng kiểm chứng",
+      "weight": 15,
+      "description": "Dựa trên số liệu thật, có cách đo và kiểm chứng tiếp"
+    }
+  ]
+}
