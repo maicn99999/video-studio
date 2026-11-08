@@ -8,7 +8,7 @@ function clip(text, max = MAX_TEXT_CHARS) {
 
 function problemBlock(input) {
   let s = `### VẤN ĐỀ CẦN GIẢI QUYẾT\n${clip(input.problem, 8000)}\n`;
-  if (input.context) s += `\n### BỐI CẢNH\n${clip(input.context, 8000)}\n`;
+  if (input.context) s += `\n### BỐI CẢNH\n${clip(input.context, 16000)}\n`;
   if (input.goals) s += `\n### MỤC TIÊU\n${clip(input.goals, 4000)}\n`;
   if (input.constraints) s += `\n### RÀNG BUỘC\n${clip(input.constraints, 4000)}\n`;
   s += `\n### TIÊU CHÍ ĐÁNH GIÁ (trọng số)\n`;

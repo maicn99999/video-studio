@@ -248,6 +248,9 @@ test('validateDebateInput', () => {
   assert.ok(validateDebateInput({ problem: 'Một vấn đề đủ dài', criteria: [{ name: 'X', weight: 0 }] }).errors.length);
   assert.ok(validateDebateInput({ problem: 'Một vấn đề đủ dài', criteria: [{ name: 'X', weight: 5 }, { name: 'x', weight: 5 }] }).errors.length);
   assert.ok(validateDebateInput({ problem: 'a'.repeat(9000) }).errors.length);
+  // Bối cảnh cho phép tới 16.000 ký tự (đủ chỗ cho dữ liệu keyword của nhiều chủ đề)
+  assert.equal(validateDebateInput({ problem: 'Một vấn đề đủ dài', context: 'c'.repeat(15000) }).errors.length, 0);
+  assert.ok(validateDebateInput({ problem: 'Một vấn đề đủ dài', context: 'c'.repeat(16001) }).errors.length);
 });
 
 test('cookie ký HMAC: đúng, sai chữ ký, hết hạn', () => {

@@ -217,7 +217,7 @@ function renderNew() {
     h('span', { class: 'tag-a' }, `A: ${P.A.label}`), ' vs ', h('span', { class: 'tag-b' }, `B: ${P.B.label}`),
     ' · ', h('span', { class: 'tag-j' }, `Trọng tài: ${P.judge.label}`)),
   ...field('problem', 'Vấn đề cần giải quyết *', false, 'Mô tả rõ vấn đề, càng cụ thể càng tốt (bắt buộc, tối thiểu 10 ký tự).', 'textarea', { required: true, minlength: 10, maxlength: 8000, rows: 5 }),
-  ...field('context', 'Bối cảnh', true, 'Ngành, quy mô, hiện trạng, dữ liệu đã có…', 'textarea', { maxlength: 8000 }),
+  ...field('context', 'Bối cảnh', true, 'Ngành, quy mô, hiện trạng, dữ liệu đã có (tối đa 16.000 ký tự)…', 'textarea', { maxlength: 16000 }),
   ...field('goals', 'Mục tiêu', true, 'Kết quả mong muốn, con số mục tiêu, thời hạn…', 'textarea', { maxlength: 4000, rows: 3 }),
   ...field('constraints', 'Ràng buộc', true, 'Ngân sách, nhân sự, pháp lý, thời gian, công nghệ…', 'textarea', { maxlength: 4000, rows: 3 }),
   ...field('title', 'Tiêu đề phiên', true, 'Để trống sẽ tự lấy từ vấn đề.', 'input', { maxlength: 200 }),

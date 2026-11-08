@@ -20,7 +20,7 @@ export const DEFAULT_CRITERIA = [
   { name: 'Tính bền vững & sáng tạo', weight: 15, description: 'Hiệu quả lâu dài, cách tiếp cận mới' },
 ];
 
-const LIMITS = { problem: 8000, context: 8000, goals: 4000, constraints: 4000, title: 200 };
+const LIMITS = { problem: 8000, context: 16000, goals: 4000, constraints: 4000, title: 200 };
 
 export function validateDebateInput(body) {
   const errors = [];
