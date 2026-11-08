@@ -33,6 +33,6 @@ chmod 600 .env
 echo ""
 echo "✅ Đã tạo .env (quyền 600)."
 [ "${GEN_PASS:-0}" = 1 ] && echo "   Mật khẩu đăng nhập được sinh tự động: $PASS  (hãy lưu lại!)"
-echo "👉 Tiếp theo: mở .env và điền OPENAI_API_KEY, ANTHROPIC_API_KEY, META_API_KEY:"
+echo "👉 Tiếp theo: mở .env và điền OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY:"
 echo "      nano .env"
 echo "   rồi chạy:  docker compose up -d --build"

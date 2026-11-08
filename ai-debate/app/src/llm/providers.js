@@ -4,7 +4,7 @@ import { LlmError } from './http.js';
 
 const trimSlash = (u) => u.replace(/\/+$/, '');
 
-// ---------- OpenAI Responses API (cũng dùng cho Meta Model API, vốn tương thích Responses API) ----------
+// ---------- OpenAI Responses API ----------
 export function buildResponsesRequest(p, { system, prompt, maxOutputTokens }) {
   const body = {
     model: p.model,
@@ -62,44 +62,6 @@ export function parseResponsesResponse(providerLabel, json) {
   };
 }
 
-// ---------- Chat Completions (tùy chọn cho Meta: META_API_STYLE=chat) ----------
-export function buildChatRequest(p, { system, prompt, maxOutputTokens }) {
-  const body = {
-    model: p.model,
-    messages: [
-      { role: 'system', content: system },
-      { role: 'user', content: prompt },
-    ],
-    max_completion_tokens: maxOutputTokens,
-  };
-  if (p.reasoningEffort) body.reasoning_effort = p.reasoningEffort;
-  return { url: `${trimSlash(p.baseUrl)}/chat/completions`, headers: { authorization: `Bearer ${p.apiKey}` }, body };
-}
-
-export function parseChatResponse(providerLabel, json) {
-  const choice = json.choices?.[0];
-  const text = choice?.message?.content || '';
-  const truncated = choice?.finish_reason === 'length';
-  if (!text) {
-    if (choice?.message?.refusal) throw new LlmError('refusal', `${providerLabel} từ chối trả lời: ${choice.message.refusal}`);
-    throw new LlmError(truncated ? 'truncated' : 'empty', `${providerLabel}: phản hồi rỗng${truncated ? ' (hết token)' : ''}.`);
-  }
-  const u = json.usage || {};
-  return {
-    text,
-    model: json.model,
-    stopReason: choice.finish_reason,
-    truncated,
-    usage: {
-      inputTokens: u.prompt_tokens || 0,
-      cachedInputTokens: u.prompt_tokens_details?.cached_tokens || 0,
-      cacheWriteTokens: 0,
-      outputTokens: u.completion_tokens || 0,
-      reasoningTokens: u.completion_tokens_details?.reasoning_tokens || 0,
-    },
-  };
-}
-
 // ---------- Anthropic Messages API ----------
 export function buildAnthropicRequest(p, { system, prompt, maxOutputTokens }) {
   const headers = { 'x-api-key': p.apiKey, 'anthropic-version': p.apiVersion };
@@ -153,11 +115,59 @@ export function parseAnthropicResponse(providerLabel, json) {
   };
 }
 
+// ---------- Google Gemini API (generateContent) ----------
+export function buildGeminiRequest(p, { system, prompt, maxOutputTokens, json }) {
+  const generationConfig = { maxOutputTokens };
+  if (p.thinkingLevel) generationConfig.thinkingConfig = { thinkingLevel: p.thinkingLevel };
+  // Trọng tài cần JSON: yêu cầu Gemini trả đúng application/json.
+  if (json) generationConfig.responseMimeType = 'application/json';
+  return {
+    url: `${trimSlash(p.baseUrl)}/models/${encodeURIComponent(p.model)}:generateContent`,
+    headers: { 'x-goog-api-key': p.apiKey },
+    body: {
+      systemInstruction: { parts: [{ text: system }] },
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig,
+    },
+  };
+}
+
+const GEMINI_BLOCKED = new Set(['SAFETY', 'RECITATION', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII', 'IMAGE_SAFETY', 'LANGUAGE']);
+
+export function parseGeminiResponse(providerLabel, json) {
+  if (json.promptFeedback?.blockReason) {
+    throw new LlmError('refusal', `${providerLabel} chặn yêu cầu (blockReason: ${json.promptFeedback.blockReason}). Hãy diễn đạt lại vấn đề.`);
+  }
+  const cand = (json.candidates || [])[0];
+  const finish = cand?.finishReason;
+  // Bỏ qua phần "thought" (tóm tắt suy luận), chỉ lấy câu trả lời.
+  const text = (cand?.content?.parts || []).filter((x) => !x.thought && typeof x.text === 'string').map((x) => x.text).join('');
+  if (!text) {
+    if (GEMINI_BLOCKED.has(finish)) throw new LlmError('refusal', `${providerLabel} từ chối trả lời (finishReason: ${finish}).`);
+    if (finish === 'MAX_TOKENS') {
+      throw new LlmError('truncated', `${providerLabel}: hết giới hạn token trước khi trả lời. Hãy tăng JUDGE_MAX_OUTPUT_TOKENS hoặc giảm GEMINI_THINKING_LEVEL.`);
+    }
+    throw new LlmError('empty', `${providerLabel}: phản hồi rỗng${finish ? ` (finishReason: ${finish})` : ''}.`, { retryable: true });
+  }
+  const u = json.usageMetadata || {};
+  const thoughts = u.thoughtsTokenCount || 0; // tính phí như output
+  return {
+    text,
+    model: json.modelVersion || undefined,
+    stopReason: finish || 'STOP',
+    truncated: finish === 'MAX_TOKENS',
+    usage: {
+      inputTokens: u.promptTokenCount || 0,
+      cachedInputTokens: u.cachedContentTokenCount || 0,
+      cacheWriteTokens: 0,
+      outputTokens: (u.candidatesTokenCount || 0) + thoughts,
+      reasoningTokens: thoughts,
+    },
+  };
+}
+
 export const ADAPTERS = {
   openai: { build: buildResponsesRequest, parse: parseResponsesResponse },
   anthropic: { build: buildAnthropicRequest, parse: parseAnthropicResponse },
-  meta: {
-    build: (p, a) => (p.apiStyle === 'chat' ? buildChatRequest(p, a) : buildResponsesRequest(p, a)),
-    parse: (label, json) => (json.choices ? parseChatResponse(label, json) : parseResponsesResponse(label, json)),
-  },
+  gemini: { build: buildGeminiRequest, parse: parseGeminiResponse },
 };

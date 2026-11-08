@@ -15,13 +15,13 @@
 Trình duyệt ── POST /api/debates ──► app: kiểm tra input, ngân sách ngày/tháng, số phiên đồng thời
                                       │ tạo bản ghi (status=queued)
                                       └─ POST n8n /webhook/ai-debate {sessionId} + x-internal-token
-n8n "AI Debate — GPT vs Claude, trọng tài Muse":
+n8n "AI Debate — GPT vs Claude, trọng tài Gemini":
   Webhook → IF token hợp lệ → POST /internal/sessions/:id/start (lưu executionId, lấy input)
   → Vòng 1: Code tạo 2 item (A,B) → HTTP /internal/llm (2 item chạy SONG SONG) → Code kiểm tra
   → Vòng 2: phản biện chéo   → HTTP → kiểm tra
   → Vòng 3: hoàn thiện        → HTTP → kiểm tra
   → Trọng tài: hồ sơ "mù" → HTTP → đọc JSON → IF hợp lệ?
-        └─ không → yêu cầu Muse sửa JSON (1 lần) → đọc lại
+        └─ không → yêu cầu Gemini sửa JSON (1 lần) → đọc lại
   → Lập báo cáo tiếng Việt (điểm có trọng số tính bằng code) → POST /internal/sessions/:id/complete
 Lỗi ở bất kỳ node nào → Error Workflow "AI Debate — Xử lý lỗi" → POST /internal/n8n-error → phiên = failed (kèm thông báo tiếng Việt)
 Trình duyệt poll GET /api/debates/:id mỗi 3 giây để hiển thị trạng thái từng vòng.
@@ -31,7 +31,7 @@ Trình duyệt poll GET /api/debates/:id mỗi 3 giây để hiển thị trạn
 
 Mọi lời gọi AI đi qua `POST /internal/llm` `{sessionId, round, role, stage, system, prompt}`:
 
-1. **Định tuyến vai trò:** A → OpenAI, B → Anthropic, judge → Meta (`config.roles`).
+1. **Định tuyến vai trò:** A → OpenAI, B → Anthropic, judge → Google Gemini (`config.roles`); riêng trọng tài bật `responseMimeType: application/json`.
 2. **Idempotency:** khóa `r{round}-{role}`; lượt đã thành công được trả lại từ CSDL → n8n retry node không gây tính phí lần 2. Lời gọi trùng đồng thời được gộp.
 3. **Ngân sách:** ước tính chi phí xấu nhất (input ước lượng + `max_output_tokens`) và *giữ chỗ* trước khi gọi; từ chối nếu vượt trần phiên/ngày/tháng. Sau khi gọi, ghi chi phí thực theo `usage`.
 4. **Giới hạn đồng thời** mỗi nhà cung cấp (semaphore).

@@ -1,4 +1,4 @@
-// Trọng tài Muse đánh giá "mù" (không biết bên nào là GPT/Claude) bằng tiêu chí định lượng.
+// Trọng tài Gemini đánh giá "mù" (không biết bên nào là GPT/Claude) bằng tiêu chí định lượng.
 const state = $input.first().json.state;
 const R = state.rounds;
 const criteriaList = state.input.criteria.map((c, i) => `${i + 1}. "${c.name}" — trọng số ${c.weight}${c.description ? ` — ${c.description}` : ''}`).join('\n');

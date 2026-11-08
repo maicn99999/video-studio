@@ -1,5 +1,5 @@
 // Kiểm thử end-to-end trên stack Docker thật: Postgres + n8n (workflow import thật) + app + MOCK LLM.
-// Chạy qua: ./scripts/e2e.sh   (KHÔNG gọi API thật của OpenAI/Anthropic/Meta)
+// Chạy qua: ./scripts/e2e.sh   (KHÔNG gọi API thật của OpenAI/Anthropic/Google)
 import assert from 'node:assert/strict';
 
 const BASE = process.env.E2E_APP_URL || 'http://127.0.0.1:3000';

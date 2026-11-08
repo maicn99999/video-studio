@@ -17,8 +17,17 @@ export const DEFAULT_PRICES = {
   // Các model mà server-side refusal fallback có thể chuyển sang
   'claude-opus-5': { input: 5.0, cachedInput: 0.5, cacheWrite: 6.25, output: 25.0 },
   'claude-opus-4-8': { input: 5.0, cachedInput: 0.5, cacheWrite: 6.25, output: 25.0 },
-  // Meta — dev.meta.ai/docs/pricing-rate-limits (Standard mode)
-  'muse-wonder-1.0': { input: 4.0, cachedInput: 0.2, output: 20.0 },
+  // Google — ai.google.dev/gemini-api/docs/models/gemini-4-argon (giá giới thiệu đến hết 30/11/2026,
+  // sau đó $4 / $20). Token suy luận (thoughtsTokenCount) tính theo giá output.
+  'gemini-4-argon': {
+    input: 4.0, cachedInput: 0.2, output: 20.0,
+    intro: { until: '2026-12-01T00:00:00Z', input: 2.0, cachedInput: 0.1, output: 10.0 },
+  },
+  // Gemini 3.1 Pro (preview): prompt > 200K token: $4 / $18
+  'gemini-3.1-pro-preview': {
+    input: 2.0, cachedInput: 0.2, output: 12.0,
+    longContext: { thresholdInputTokens: 200_000, inputMultiplier: 2, outputMultiplier: 1.5 },
+  },
 };
 
 export function buildPriceTable(overridesJson) {
@@ -46,16 +55,20 @@ function fallbackPrice(table) {
   };
 }
 
-export function priceFor(table, model) {
-  return table[model] || fallbackPrice(table);
+export function priceFor(table, model, at = new Date()) {
+  const p = table[model];
+  if (!p) return fallbackPrice(table);
+  // Giá khuyến mãi có thời hạn (vd. Gemini 4 Argon đến 30/11/2026)
+  if (p.intro && at < new Date(p.intro.until)) return { ...p, ...p.intro };
+  return p;
 }
 
 /**
  * Tính chi phí thực tế từ usage đã chuẩn hóa.
  * usage = { inputTokens (tổng input, gồm cả phần cached), cachedInputTokens, cacheWriteTokens, outputTokens }
  */
-export function computeCost(table, model, usage) {
-  const p = priceFor(table, model);
+export function computeCost(table, model, usage, at = new Date()) {
+  const p = priceFor(table, model, at);
   const input = usage.inputTokens || 0;
   const cached = Math.min(usage.cachedInputTokens || 0, input);
   const cacheWrite = Math.min(usage.cacheWriteTokens || 0, input - cached);
@@ -81,11 +94,11 @@ export function estimateTokens(text) {
 }
 
 // Chi phí xấu nhất của một lần gọi (dùng để giữ chỗ ngân sách trước khi gọi).
-export function worstCaseCost(table, model, promptChars, maxOutputTokens) {
+export function worstCaseCost(table, model, promptChars, maxOutputTokens, at = new Date()) {
   return computeCost(table, model, {
     inputTokens: Math.ceil(promptChars / 2.5),
     outputTokens: maxOutputTokens,
-  });
+  }, at);
 }
 
 export const round6 = (n) => Math.round(n * 1e6) / 1e6;

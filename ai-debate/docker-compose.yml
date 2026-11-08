@@ -103,17 +103,16 @@ services:
       # --- API key: đặt trong .env, hoặc dùng *_FILE trỏ tới Docker secret (xem README)
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      META_API_KEY: ${META_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-6-sol}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-5-5}
-      META_MODEL: ${META_MODEL:-muse-wonder-1.0}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-4-argon}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
-      META_BASE_URL: ${META_BASE_URL:-https://api.meta.ai/v1}
-      META_API_STYLE: ${META_API_STYLE:-responses}
+      GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
       OPENAI_REASONING_EFFORT: ${OPENAI_REASONING_EFFORT:-high}
       ANTHROPIC_EFFORT: ${ANTHROPIC_EFFORT:-high}
-      META_REASONING_EFFORT: ${META_REASONING_EFFORT:-high}
+      GEMINI_THINKING_LEVEL: ${GEMINI_THINKING_LEVEL:-high}
       ANTHROPIC_REFUSAL_FALLBACK: ${ANTHROPIC_REFUSAL_FALLBACK:-true}
       # --- Giới hạn chi phí (USD)
       MAX_COST_PER_SESSION_USD: ${MAX_COST_PER_SESSION_USD:-3}

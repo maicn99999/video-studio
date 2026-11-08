@@ -18,7 +18,7 @@ Lệnh xem log hữu ích nhất: `docker compose logs --tail=100 app` và `dock
 | "… bị giới hạn tốc độ (429)" sau nhiều lần thử | Vượt rate limit tài khoản | Giảm `MAX_CONCURRENT_DEBATES`, `LLM_MAX_CONCURRENCY_PER_PROVIDER`; nâng tier tài khoản |
 | Phiên bị đánh dấu "không có tiến triển trong 60 phút" | n8n bị dừng / khởi động lại giữa chừng | `docker compose ps`; chạy lại phiên (nút **Nhân bản**) |
 | Xuất PDF lỗi | Image build không có Chromium (`WITH_PDF=false`) | Đặt `WITH_PDF=true`, `docker compose up -d --build`; tạm thời dùng nút **In** → "Lưu dưới dạng PDF" |
-| Chi phí Muse hiển thị $0 | Meta trả `usage` khác định dạng giả định | Báo lại (kèm log); xem docs/API-VERIFICATION.md |
+| Gemini báo "từ chối trả lời (finishReason: SAFETY)" | Bộ lọc an toàn của Google | Diễn đạt lại vấn đề |
 | Báo cáo có "⚠️ Cảnh báo: phán quyết chưa đầy đủ" | Trọng tài không trả JSON hợp lệ kể cả sau lần sửa | Báo cáo vẫn kèm phán quyết gốc; có thể chạy lại phiên |
 | n8n log "Postgres 16 is outside the supported range" | Dùng image Postgres cũ | Mặc định đã là `postgres:17-alpine`; dữ liệu cũ cần `pg_dump`/`restore` khi nâng cấp phiên bản lớn |
 

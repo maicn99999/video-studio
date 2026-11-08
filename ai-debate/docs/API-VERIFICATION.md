@@ -1,6 +1,8 @@
 # Xác thực tài liệu API (endpoint, xác thực, schema, model ID, giá)
 
-Ngày kiểm tra: **07/11/2026**. Trong môi trường phát triển, mạng bị giới hạn: **không truy cập trực tiếp được** `developers.openai.com` và `dev.meta.ai`; thông tin về hai nhà cung cấp này được lấy qua **kết quả tìm kiếm trỏ tới chính các trang tài liệu chính thức đó** (nội dung tóm tắt, không phải đọc toàn văn). Tài liệu Anthropic được đối chiếu với tài liệu tham chiếu chính thức đi kèm công cụ phát triển.
+Ngày kiểm tra: **07/11/2026**. Trong môi trường phát triển, mạng bị giới hạn: **không truy cập trực tiếp được** `developers.openai.com` và `ai.google.dev`; thông tin về hai nhà cung cấp này được lấy qua **kết quả tìm kiếm trỏ tới chính các trang tài liệu chính thức đó** (nội dung tóm tắt, không phải đọc toàn văn). Tài liệu Anthropic được đối chiếu với tài liệu tham chiếu chính thức đi kèm công cụ phát triển.
+
+Dự án đã chuyển trọng tài sang **Google Gemini** (08/11/2026); mục Meta cũ đã được gỡ.
 
 Mức độ tin cậy: ✅ đã đối chiếu tài liệu chính thức · 🟡 theo trích đoạn tài liệu chính thức qua tìm kiếm, chưa đọc toàn văn · ⚠️ chỉ có nguồn bên thứ ba / chưa xác thực.
 
@@ -34,29 +36,32 @@ Mức độ tin cậy: ✅ đã đối chiếu tài liệu chính thức · 🟡
 | Giá / 1M token | input $4.00 · output $20.00 · cache read $0.20 · cache write (5 phút) $5.00 | ✅ |
 | Ngữ cảnh | 1M token; output tối đa 128K | ✅ |
 
-## Meta Model API — Muse Wonder
+## Google — Gemini 4 Argon (trọng tài)
+
+Cập nhật 08/11/2026: trọng tài đổi từ Meta Muse Wonder sang Gemini theo yêu cầu. `ai.google.dev` cũng bị chặn trong môi trường phát triển → thông tin lấy qua kết quả tìm kiếm trỏ tới trang chính thức.
 
 | Hạng mục | Giá trị dùng trong code | Mức độ |
 |---|---|---|
-| Model ID | `muse-wonder-1.0` (Standard mode; ngữ cảnh 1.048.576 token) | 🟡 (`dev.meta.ai/docs/models`) |
-| Base URL | `https://api.meta.ai/v1` | 🟡 (`dev.meta.ai/docs/api-reference`) |
-| Xác thực | `Authorization: Bearer <key>` — tài liệu đặt tên biến là `MODEL_API_KEY`; dự án dùng `META_API_KEY` | 🟡 (`dev.meta.ai/docs/authentication`) |
-| Endpoint | `POST /v1/responses` (ví dụ chính thức đầu tiên dùng Responses API + reasoning effort). Ngoài ra có Chat Completions và Messages tương thích. Đổi bằng `META_API_STYLE=chat`. | 🟡 |
-| Schema Responses | Tương thích OpenAI Responses API (tài liệu nói dùng được OpenAI SDK chỉ bằng đổi base URL). Parser chấp nhận cả dạng Responses và Chat Completions. | 🟡 |
-| `reasoning.effort` | Chỉ nguồn bên thứ ba liệt kê `minimal/low/medium/high/xhigh/max` → mặc định `high`, có thể đổi `META_REASONING_EFFORT` | ⚠️ |
-| Trường `usage` | **Chưa xác thực được** — giả định giống OpenAI Responses. Nếu khác, chi phí Muse hiển thị có thể bằng 0 → kiểm tra lần đầu (DEPLOY.md mục 9). | ⚠️ |
-| Giá / 1M token | input $4.00 · cached input $0.20 · output $20.00 (Standard). Web search tính riêng (không dùng). | 🟡 (`dev.meta.ai/docs/pricing-rate-limits`) |
-| Rate limit | 3.000 request/phút, 4.000.000 token/phút | 🟡 |
+| Model ID | `gemini-4-argon` (trang `ai.google.dev/gemini-api/docs/models/gemini-4-argon` ghi là ID ổn định; phát hành 13/10/2026; thay thế `gemini-3.1-pro-preview`) | 🟡 |
+| Ngữ cảnh | 1.048.576 token (chung input + output); output mặc định tối đa 65.536 | 🟡 |
+| Endpoint | `POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent` (Google gọi đây là Generate Content API "Legacy" — vẫn hoạt động; có Interactions API mới hơn) | 🟡 |
+| Xác thực | header `x-goog-api-key: $GEMINI_API_KEY` | 🟡 |
+| Request | `systemInstruction.parts[].text`, `contents[].parts[].text`, `generationConfig.maxOutputTokens`, `generationConfig.thinkingConfig.thinkingLevel` (`low`/`medium`/`high`; `thinkingBudget` **không** hỗ trợ trên Gemini 4 và không được dùng cùng `thinkingLevel`), `generationConfig.responseMimeType: "application/json"` cho trọng tài | 🟡 (`systemInstruction`, `responseMimeType`: ⚠️ theo kiến thức API Gemini, chưa thấy trong trích đoạn) |
+| Response | `candidates[0].content.parts[]` (bỏ phần `thought: true`), `finishReason` (`STOP`, `MAX_TOKENS`, `SAFETY`…), `promptFeedback.blockReason`, `modelVersion` | 🟡 |
+| Usage | `usageMetadata.promptTokenCount`, `cachedContentTokenCount`, `candidatesTokenCount`, `thoughtsTokenCount` (có thể vắng mặt → 0). Token suy luận **tính phí như output** → code cộng vào output | 🟡 |
+| Giá / 1M token | Giá giới thiệu **đến hết 30/11/2026: $2 vào / $10 ra / $0,10 cache**; từ 01/12/2026: **$4 / $20** (code tự đổi theo ngày; cache sau đó giả định $0,20). Không có gói miễn phí | 🟡 (VentureBeat + trang Google) |
+| Lỗi | 429 `RESOURCE_EXHAUSTED`, 500/503 `UNAVAILABLE` → retry; 400 `INVALID_ARGUMENT`, 403 `PERMISSION_DENIED`, 404 → không retry | 🟡 |
+| Dự phòng | Nếu tài khoản chưa dùng được `gemini-4-argon`: `GEMINI_MODEL=gemini-3.1-pro-preview` ($2 / $12; > 200K token: $4 / $18) | 🟡 |
 
 ## Việc cần làm khi có API key thật
 
 1. Chạy 1 phiên với giới hạn thấp (DEPLOY.md mục 9).
-2. Nếu có lỗi 400 về tham số: xem log `docker compose logs app`, điều chỉnh `*_EFFORT`, `META_API_STYLE`.
+2. Nếu có lỗi 400 về tham số: xem log `docker compose logs app`, điều chỉnh `*_EFFORT` / `GEMINI_THINKING_LEVEL`.
 3. So sánh chi phí trong ứng dụng với trang billing; cập nhật `PRICE_OVERRIDES_JSON` nếu giá khác.
-4. Mở `developers.openai.com` và `dev.meta.ai` để đọc lại toàn văn tài liệu — đặc biệt các mục đánh dấu ⚠️.
+4. Mở `developers.openai.com` và `ai.google.dev` để đọc lại toàn văn tài liệu — đặc biệt các mục đánh dấu ⚠️.
 
 ## Nguồn
 
 - OpenAI: https://developers.openai.com/api/docs/models/gpt-6-sol · https://developers.openai.com/api/reference/resources/responses/methods/create · https://developers.openai.com/api/docs/guides/reasoning
 - Anthropic: https://platform.claude.com/docs (Messages API, models, pricing, API versioning `2026-10-21`, refusals & fallback)
-- Meta: https://dev.meta.ai/docs/models · https://dev.meta.ai/docs/authentication · https://dev.meta.ai/docs/api-reference · https://dev.meta.ai/docs/pricing-rate-limits · https://dev.meta.ai/docs/quickstart
+- Google: https://ai.google.dev/gemini-api/docs/models/gemini-4-argon · https://ai.google.dev/gemini-api/docs/pricing · https://ai.google.dev/gemini-api/docs/generate-content/thinking · https://venturebeat.com/technology/google-makes-gemini-4-argon-broadly-available-with-limited-time-low-api-pricing-of-2-10-per-1m-token

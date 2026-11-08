@@ -73,18 +73,17 @@ export function loadConfig(env = process.env) {
         effort: r('ANTHROPIC_EFFORT', 'high'),
         refusalFallback: bool(r('ANTHROPIC_REFUSAL_FALLBACK'), true),
       },
-      meta: {
-        label: 'Meta Muse Wonder',
-        apiKey: r('META_API_KEY'),
-        apiKeyVar: 'META_API_KEY',
-        baseUrl: r('META_BASE_URL', 'https://api.meta.ai/v1'),
-        model: r('META_MODEL', 'muse-wonder-1.0'),
-        reasoningEffort: r('META_REASONING_EFFORT', 'high'),
-        apiStyle: r('META_API_STYLE', 'responses'), // responses | chat
+      gemini: {
+        label: 'Gemini 4 Argon',
+        apiKey: r('GEMINI_API_KEY'),
+        apiKeyVar: 'GEMINI_API_KEY',
+        baseUrl: r('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta'),
+        model: r('GEMINI_MODEL', 'gemini-4-argon'),
+        thinkingLevel: r('GEMINI_THINKING_LEVEL', 'high'), // low | medium | high
       },
     },
-    // Vai trò cố định theo yêu cầu: A = GPT, B = Claude, Trọng tài = Muse.
-    roles: { A: 'openai', B: 'anthropic', judge: 'meta' },
+    // Vai trò cố định: A = GPT, B = Claude, Trọng tài = Gemini.
+    roles: { A: 'openai', B: 'anthropic', judge: 'gemini' },
     priceOverrides: r('PRICE_OVERRIDES_JSON'),
   };
   return cfg;

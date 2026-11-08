@@ -6,7 +6,7 @@ Bạn nhập **một vấn đề** bằng tiếng Việt → hệ thống tự c
 |---|---|---|
 | Bên A (tranh luận) | GPT-6 Sol — OpenAI | `gpt-6-sol` |
 | Bên B (tranh luận) | Claude Opus 5.5 — Anthropic | `claude-opus-5-5` |
-| Trọng tài | Meta Muse Wonder — Meta Model API | `muse-wonder-1.0` |
+| Trọng tài | Gemini 4 Argon — Google Gemini API | `gemini-4-argon` |
 
 ```
  Bạn (trình duyệt / điện thoại)
@@ -14,7 +14,7 @@ Bạn nhập **một vấn đề** bằng tiếng Việt → hệ thống tự c
    ┌────▼─────┐   webhook    ┌──────────────┐  /internal/llm   ┌─────────────────────┐
    │  Caddy   │──► app ─────►│  n8n (điều   │─────────────────►│ app: LLM Gateway     │──► OpenAI  (GPT-6 Sol)
    │ (HTTPS)  │   (giao diện,│  phối 3 vòng │◄─────────────────│ giữ API key, retry,  │──► Anthropic (Claude)
-   └──────────┘   lịch sử,   │  + trọng tài)│  kết quả + chi phí│ timeout, ngân sách,  │──► Meta (Muse Wonder)
+   └──────────┘   lịch sử,   │  + trọng tài)│  kết quả + chi phí│ timeout, ngân sách,  │──► Google (Gemini)
                   xuất file) └──────┬───────┘                   │ ghi token & chi phí  │
                                     └── Postgres (lịch sử, n8n) ─┴─────────────────────┘
 ```
@@ -24,7 +24,7 @@ Bạn nhập **một vấn đề** bằng tiếng Việt → hệ thống tự c
 1. **Vòng 1 — Phân tích độc lập:** GPT và Claude phân tích **song song**, không thấy kết quả của nhau.
 2. **Vòng 2 — Phản biện chéo:** mỗi bên đọc phương án đối phương và phản biện chi tiết.
 3. **Vòng 3 — Hoàn thiện:** mỗi bên tiếp thu / bác bỏ phản biện và chốt phương án cuối.
-4. **Trọng tài Muse:** chấm **"mù"** (không biết bên nào là GPT/Claude) theo tiêu chí & trọng số bạn đặt (0–10 điểm/tiêu chí, hệ thống tự tính điểm /100), chọn **A**, **B** hoặc **kết hợp**, nêu rõ **bất đồng chưa giải quyết**.
+4. **Trọng tài Gemini:** chấm **"mù"** (không biết bên nào là GPT/Claude) theo tiêu chí & trọng số bạn đặt (0–10 điểm/tiêu chí, hệ thống tự tính điểm /100), chọn **A**, **B** hoặc **kết hợp**, nêu rõ **bất đồng chưa giải quyết**.
 5. **Báo cáo tiếng Việt:** tóm tắt điều hành, bảng điểm, bảng so sánh, lập luận, giải pháp khuyến nghị, bất đồng, rủi ro, kế hoạch hành động, token & chi phí.
 
 ## Tính năng
@@ -44,10 +44,10 @@ Bạn nhập **một vấn đề** bằng tiếng Việt → hệ thống tự c
 
 | Hạng mục | Kết quả |
 |---|---|
-| 25 unit test (giá, retry, timeout, rate limit, schema request/response, cấu hình, bảo mật) | ✅ đạt |
+| 28 unit test (giá, retry, timeout, rate limit, schema request/response, cấu hình, bảo mật) | ✅ đạt |
 | 18 test tích hợp: app + gateway + **workflow JSON thật** (chạy bằng bộ thông dịch mini) + **mock API** | ✅ đạt |
 | 6 bước E2E trên Docker: **n8n 2.46.6 thật** + Postgres + app + **mock API** (luồng đầy đủ, 429/500 retry, sửa JSON trọng tài, Error Workflow) | ✅ đạt |
-| Gọi **API thật** của OpenAI / Anthropic / Meta | ❌ **CHƯA kiểm thử** — chưa có API key. Mọi kiểm thử ở trên dùng **mock server** mô phỏng đúng schema tài liệu. |
+| Gọi **API thật** của OpenAI / Anthropic / Google | ❌ **CHƯA kiểm thử** — chưa có API key. Mọi kiểm thử ở trên dùng **mock server** mô phỏng đúng schema tài liệu. |
 
 Lần chạy đầu tiên với key thật, hãy làm theo mục **"Kiểm tra lần đầu với API thật"** trong [docs/DEPLOY.md](docs/DEPLOY.md#9-kiểm-tra-lần-đầu-với-api-thật). Chi tiết những gì đã/chưa xác thực trong tài liệu API: [docs/API-VERIFICATION.md](docs/API-VERIFICATION.md).
 
@@ -67,7 +67,7 @@ cd video-studio/ai-debate
 ./scripts/setup.sh
 
 # 4. Điền 3 API key
-nano .env        # OPENAI_API_KEY=..., ANTHROPIC_API_KEY=..., META_API_KEY=...
+nano .env        # OPENAI_API_KEY=..., ANTHROPIC_API_KEY=..., GEMINI_API_KEY=...
 
 # 5. Khởi động
 docker compose up -d --build
@@ -98,7 +98,7 @@ Mẹo: ghi rõ con số (ngân sách, nhân sự, thời hạn) ở *Ràng buộ
 
 ## 💰 Chi phí ước tính
 
-Giá (USD / 1 triệu token, kiểm tra 07/11/2026): GPT-6 Sol $2 vào / $10 ra · Claude Opus 5.5 $4 / $20 · Muse Wonder $4 / $20.
+Giá (USD / 1 triệu token, kiểm tra 07/11/2026): GPT-6 Sol $2 vào / $10 ra · Claude Opus 5.5 $4 / $20 · Gemini 4 Argon $2 / $10 (giá giới thiệu đến 30/11/2026, sau đó $4 / $20; token suy luận tính như output).
 Một phiên = 7 lượt gọi (6 lượt tranh luận + 1 trọng tài, thêm 1 lượt nếu cần sửa JSON). **Ước tính thô: khoảng $0,5–1,5/phiên**, tùy độ dài và mức suy luận; mức trần mặc định **$3/phiên, $15/ngày, $100/tháng** (sửa trong `.env`). Đây là ước tính — hóa đơn chính thức xem trên trang billing của từng nhà cung cấp. Chi phí VPS (≈ $6–24/tháng) tính riêng.
 
 ## ⚙️ Cấu hình chính (`.env`)
@@ -107,9 +107,9 @@ Một phiên = 7 lượt gọi (6 lượt tranh luận + 1 trọng tài, thêm 1
 |---|---|---|
 | `APP_DOMAIN` | Tên miền cho HTTPS | — |
 | `APP_PASSWORD` | Mật khẩu đăng nhập giao diện (≥ 10 ký tự) | — |
-| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `META_API_KEY` | API key 3 nhà cung cấp | — |
-| `OPENAI_MODEL`, `ANTHROPIC_MODEL`, `META_MODEL` | Model ID | `gpt-6-sol`, `claude-opus-5-5`, `muse-wonder-1.0` |
-| `OPENAI_REASONING_EFFORT`, `ANTHROPIC_EFFORT`, `META_REASONING_EFFORT` | Mức suy luận (cao = tốt hơn, đắt hơn) | `high` |
+| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` | API key 3 nhà cung cấp | — |
+| `OPENAI_MODEL`, `ANTHROPIC_MODEL`, `GEMINI_MODEL` | Model ID | `gpt-6-sol`, `claude-opus-5-5`, `gemini-4-argon` |
+| `OPENAI_REASONING_EFFORT`, `ANTHROPIC_EFFORT`, `GEMINI_THINKING_LEVEL` | Mức suy luận (cao = tốt hơn, đắt hơn) | `high` |
 | `MAX_COST_PER_SESSION_USD` / `_DAY_` / `_MONTH_` | Trần chi phí (0 = không giới hạn) | 3 / 15 / 100 |
 | `MAX_CONCURRENT_DEBATES` | Số phiên chạy cùng lúc | 2 |
 | `DEBATE_MAX_OUTPUT_TOKENS`, `JUDGE_MAX_OUTPUT_TOKENS` | Token ra tối đa mỗi lượt (gồm token suy luận) | 16000 / 20000 |
@@ -149,7 +149,7 @@ ai-debate/
 │   ├── src/llm/                # Gateway: providers.js, http.js (retry), pricing.js, gateway.js (ngân sách)
 │   ├── src/export/render.js    # Xuất Markdown / PDF
 │   ├── public/                 # Giao diện web (HTML/CSS/JS thuần)
-│   ├── mock/server.js          # Mock OpenAI / Anthropic / Meta (chỉ để test)
+│   ├── mock/server.js          # Mock OpenAI / Anthropic / Gemini (chỉ để test)
 │   └── test/                   # Unit, tích hợp, E2E
 ├── n8n/
 │   ├── workflows/              # ⬅ FILE JSON IMPORT VÀO n8n (sinh tự động)
@@ -165,7 +165,7 @@ ai-debate/
 
 ```bash
 cd app && npm ci
-npm test                    # 49 test: unit + tích hợp (mock API + workflow JSON thật)
+npm test                    # 52 test: unit + tích hợp (mock API + workflow JSON thật)
 npm run build:workflow      # sau khi sửa n8n/src/code/*.js
 npm run check:workflow      # CI kiểm tra JSON đã build lại chưa
 ../scripts/e2e.sh           # E2E với n8n thật trong Docker

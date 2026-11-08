@@ -170,7 +170,7 @@ export function createApp({ cfg, store, fetchImpl = fetch, logger = console, sle
       participants: {
         A: { label: P.openai.label, model: P.openai.model },
         B: { label: P.anthropic.label, model: P.anthropic.model },
-        judge: { label: P.meta.label, model: P.meta.model },
+        judge: { label: P.gemini.label, model: P.gemini.model },
       },
       defaultCriteria: DEFAULT_CRITERIA,
       budgets: cfg.budgets,

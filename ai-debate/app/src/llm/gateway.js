@@ -1,4 +1,4 @@
-// LLM Gateway: nơi DUY NHẤT giữ API key và gọi tới OpenAI / Anthropic / Meta.
+// LLM Gateway: nơi DUY NHẤT giữ API key và gọi tới OpenAI / Anthropic / Google Gemini.
 // n8n gọi vào đây qua mạng nội bộ Docker. Gateway lo: giới hạn chi phí, giới hạn đồng thời,
 // retry/timeout/rate limit, idempotency (n8n retry không bị tính tiền 2 lần) và ghi nhận token/chi phí.
 import { ADAPTERS } from './providers.js';
@@ -120,7 +120,8 @@ export class Gateway {
     await sem.acquire();
     try {
       const adapter = ADAPTERS[providerId];
-      const { url, headers, body } = adapter.build(p, { system, prompt, maxOutputTokens });
+      // Trọng tài phải trả JSON -> bật chế độ JSON nếu provider hỗ trợ (Gemini: responseMimeType).
+      const { url, headers, body } = adapter.build(p, { system, prompt, maxOutputTokens, json: role === 'judge' });
       const res = await postJsonWithRetry({
         provider: p.label, url, headers, body,
         timeoutMs: this.cfg.llm.timeoutMs,
@@ -139,7 +140,7 @@ export class Gateway {
       });
       attempts = res.attempts;
       const parsed = adapter.parse(p.label, res.json);
-      const model = parsed.model || p.model;
+      const model = pricingModel(this.prices, parsed.model, p.model);
       const cost = computeCost(this.prices, model, parsed.usage);
       const turn = await this.store.updateTurn(sessionId, callKey, {
         status: 'ok', content: parsed.text, model,
@@ -167,6 +168,15 @@ export class Gateway {
       attempts, latency_ms: latency, finished_at: new Date(),
     }).catch((e) => this.logger.error?.('[gateway] không ghi được lỗi:', e.message));
   }
+}
+
+// Model dùng để tính giá: model thực tế trả về (vd. model dự phòng khi Claude từ chối) nếu có trong bảng giá;
+// nếu là bản snapshot có hậu tố (vd. "gpt-6-sol-2026-04-20") thì quy về model đã cấu hình.
+export function pricingModel(prices, returned, configured) {
+  if (!returned) return configured;
+  if (prices[returned]) return returned;
+  if (returned.startsWith(configured)) return configured;
+  return returned;
 }
 
 function fail(code, message, retryable = false) {

@@ -2,7 +2,7 @@
 
 Thời gian: khoảng 30–45 phút. Bạn chỉ cần sao chép & dán lệnh.
 
-> ⚠️ **Chi phí:** thuê VPS, tên miền và dùng API của OpenAI / Anthropic / Meta đều **tốn phí**. Dự án này **không tự mua hay tạo** bất kỳ dịch vụ trả phí nào — bạn tự quyết định và thanh toán.
+> ⚠️ **Chi phí:** thuê VPS, tên miền và dùng API của OpenAI / Anthropic / Google đều **tốn phí**. Dự án này **không tự mua hay tạo** bất kỳ dịch vụ trả phí nào — bạn tự quyết định và thanh toán.
 
 ---
 
@@ -14,7 +14,7 @@ Thời gian: khoảng 30–45 phút. Bạn chỉ cần sao chép & dán lệnh.
 | Tên miền | Một tên miền / tên miền con, ví dụ `debate.congty.vn` |
 | API key OpenAI | https://platform.openai.com/api-keys — tài khoản cần nạp tiền và có quyền dùng `gpt-6-sol` |
 | API key Anthropic | https://platform.claude.com/settings/keys — model `claude-opus-5-5` |
-| API key Meta Model API | https://dev.meta.ai → Model API dashboard → tab **API keys** — model `muse-wonder-1.0` |
+| API key Google Gemini | https://aistudio.google.com/apikey — cần bật **billing** cho project (Gemini 4 Argon không có ở gói miễn phí); model `gemini-4-argon` |
 
 Mẹo: đặt **giới hạn chi tiêu (spend limit)** trên trang billing của cả 3 nhà cung cấp — đây là lớp bảo vệ thứ hai ngoài giới hạn trong ứng dụng.
 
@@ -76,7 +76,7 @@ Tìm và điền:
 ```
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
-META_API_KEY=...
+GEMINI_API_KEY=AIza...
 ```
 
 Lưu: `Ctrl+O`, `Enter`, thoát: `Ctrl+X`.
@@ -89,7 +89,7 @@ Nếu không muốn key nằm trong `.env`, để trống 3 dòng trên và dùn
 mkdir -p secrets && chmod 700 secrets
 printf '%s' 'sk-...'     > secrets/openai_api_key.txt
 printf '%s' 'sk-ant-...' > secrets/anthropic_api_key.txt
-printf '%s' '...'        > secrets/meta_api_key.txt
+printf '%s' 'AIza...'   > secrets/gemini_api_key.txt
 chmod 600 secrets/*.txt
 # Khi khởi động, thêm file override:
 docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d --build
@@ -128,7 +128,7 @@ ssh -L 5678:localhost:5678 root@<IP-VPS>
 ```
 
 Lần đầu n8n yêu cầu **tạo tài khoản owner** — hãy tạo ngay. Bạn sẽ thấy 2 workflow:
-- **AI Debate — GPT vs Claude, trọng tài Muse** (Published)
+- **AI Debate — GPT vs Claude, trọng tài Gemini** (Published)
 - **AI Debate — Xử lý lỗi** (Published)
 
 > Workflow được import lại mỗi lần n8n khởi động (`N8N_AUTO_IMPORT=true`). Nếu bạn muốn tự chỉnh workflow trong giao diện n8n và giữ thay đổi, đặt `N8N_AUTO_IMPORT=false` trong `.env`.
@@ -142,9 +142,9 @@ Hệ thống mới chỉ được kiểm thử bằng **mock API**. Lần đầu
 2. Tạo một phiên với vấn đề ngắn.
 3. Theo dõi: `docker compose logs -f app`. Các lỗi hay gặp:
    - `401` → key sai / chưa kích hoạt; `403` → tài khoản chưa có quyền dùng model;
-   - `404 ... model` → model ID không có trong tài khoản: kiểm tra lại `OPENAI_MODEL` / `ANTHROPIC_MODEL` / `META_MODEL`;
+   - `404 ... model` → model ID không có trong tài khoản: kiểm tra lại `OPENAI_MODEL` / `ANTHROPIC_MODEL` / `GEMINI_MODEL`;
    - `400 ... reasoning` / `effort` → giảm `*_REASONING_EFFORT` / `ANTHROPIC_EFFORT` xuống `medium`;
-   - Meta trả lỗi định dạng → thử `META_API_STYLE=chat`.
+   - Gemini `400 INVALID_ARGUMENT ... thinkingLevel` → đặt `GEMINI_THINKING_LEVEL=medium` hoặc để trống; nếu `gemini-4-argon` chưa mở cho tài khoản, thử `GEMINI_MODEL=gemini-3.1-pro-preview`.
 4. Khi phiên hoàn tất: so sánh chi phí trong mục **Chi phí** với trang billing của từng nhà cung cấp (sau vài giờ). Nếu giá thay đổi, cập nhật `PRICE_OVERRIDES_JSON`.
 5. Trả giới hạn về mức mong muốn.
 

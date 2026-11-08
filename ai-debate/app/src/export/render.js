@@ -8,7 +8,7 @@ const ROUND_TITLES = {
   3: 'Vòng 3 — Hoàn thiện phương án',
   4: 'Trọng tài — Đánh giá',
 };
-const ROLE_LABEL = { A: 'Bên A (GPT-6 Sol)', B: 'Bên B (Claude Opus 5.5)', judge: 'Trọng tài (Meta Muse Wonder)' };
+const ROLE_LABEL = { A: 'Bên A (GPT-6 Sol)', B: 'Bên B (Claude Opus 5.5)', judge: 'Trọng tài (Gemini)' };
 const STATUS_VI = { queued: 'Đang chờ', running: 'Đang chạy', completed: 'Hoàn tất', failed: 'Lỗi', cancelled: 'Đã hủy' };
 
 const usd = (n) => `$${Number(n || 0).toFixed(4)}`;

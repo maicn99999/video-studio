@@ -245,7 +245,7 @@ const STEP_DEFS = [
   { key: 'round1', round: 1, title: 'Vòng 1', sub: 'Phân tích độc lập' },
   { key: 'round2', round: 2, title: 'Vòng 2', sub: 'Phản biện chéo' },
   { key: 'round3', round: 3, title: 'Vòng 3', sub: 'Hoàn thiện phương án' },
-  { key: 'judging', round: 4, title: 'Trọng tài', sub: 'Muse chấm điểm' },
+  { key: 'judging', round: 4, title: 'Trọng tài', sub: 'Gemini chấm điểm' },
   { key: 'done', round: 6, title: 'Báo cáo', sub: 'Tổng hợp tiếng Việt' },
 ];
 const STAGE_ORDER = ['queued', 'round1', 'round2', 'round3', 'judging', 'reporting', 'done'];
@@ -450,7 +450,7 @@ async function renderUsage() {
     h('div', { class: 'stats' }, stat('Hôm nay (UTC)', u.today.total, u.budgets.perDayUsd), stat('Tháng này (UTC)', u.month.total, u.budgets.perMonthUsd), stat('Tổng cộng', u.all.total, 0)),
     h('div', { class: 'card' }, h('h2', {}, 'Theo model — tháng này'), table(u.month.byModel)),
     h('div', { class: 'card' }, h('h2', {}, 'Theo model — toàn bộ'), table(u.all.byModel)),
-    h('p', { class: 'muted small' }, `Giới hạn mỗi phiên: ${usd(u.budgets.perSessionUsd)}. Số liệu là ước tính theo bảng giá cấu hình; hóa đơn chính thức xem trên trang billing của OpenAI, Anthropic và Meta.`));
+    h('p', { class: 'muted small' }, `Giới hạn mỗi phiên: ${usd(u.budgets.perSessionUsd)}. Số liệu là ước tính theo bảng giá cấu hình; hóa đơn chính thức xem trên trang billing của OpenAI, Anthropic và Google.`));
 }
 
 // ---------------------------------------------------------------- Hướng dẫn

@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildPriceTable, computeCost, worstCaseCost } from '../src/llm/pricing.js';
+import { pricingModel } from '../src/llm/gateway.js';
 import { postJsonWithRetry, parseRetryAfter, backoffDelay, LlmError } from '../src/llm/http.js';
 import {
   buildResponsesRequest, parseResponsesResponse, buildAnthropicRequest, parseAnthropicResponse,
-  buildChatRequest, parseChatResponse, ADAPTERS,
+  buildGeminiRequest, parseGeminiResponse, ADAPTERS,
 } from '../src/llm/providers.js';
 import { loadConfig, readEnv, validateConfig } from '../src/config.js';
 import { validateDebateInput } from '../src/app.js';
@@ -23,11 +24,25 @@ test('computeCost: GPT-6 Sol có cache input', () => {
   assert.equal(c, Math.round(expected * 1e6) / 1e6);
 });
 
-test('computeCost: dưới ngưỡng long-context, Claude Opus 5.5 và Muse Wonder', () => {
+test('computeCost: dưới ngưỡng long-context, Claude Opus 5.5', () => {
   const t = buildPriceTable();
   assert.equal(computeCost(t, 'gpt-6-sol', { inputTokens: 10_000, outputTokens: 2_000 }), (10_000 * 2 + 2_000 * 10) / 1e6);
   assert.equal(computeCost(t, 'claude-opus-5-5', { inputTokens: 10_000, cachedInputTokens: 4_000, outputTokens: 1_000 }), (6_000 * 4 + 4_000 * 0.2 + 1_000 * 20) / 1e6);
-  assert.equal(computeCost(t, 'muse-wonder-1.0', { inputTokens: 1_000, outputTokens: 1_000 }), (1_000 * 4 + 1_000 * 20) / 1e6);
+});
+
+test('computeCost: Gemini 4 Argon giá giới thiệu đến 30/11/2026, sau đó $4/$20', () => {
+  const t = buildPriceTable();
+  const u = { inputTokens: 1_000_000, outputTokens: 1_000_000 };
+  assert.equal(computeCost(t, 'gemini-4-argon', u, new Date('2026-11-08T00:00:00Z')), 2 + 10);
+  assert.equal(computeCost(t, 'gemini-4-argon', u, new Date('2026-12-01T00:00:00Z')), 4 + 20);
+  assert.equal(computeCost(t, 'gemini-4-argon', { inputTokens: 1_000_000, cachedInputTokens: 1_000_000 }, new Date('2026-11-08T00:00:00Z')), 0.1);
+});
+
+test('pricingModel: snapshot có hậu tố quy về model cấu hình, model fallback giữ nguyên', () => {
+  const t = buildPriceTable();
+  assert.equal(pricingModel(t, 'gpt-6-sol-2026-04-20', 'gpt-6-sol'), 'gpt-6-sol');
+  assert.equal(pricingModel(t, 'claude-opus-4-8', 'claude-opus-5-5'), 'claude-opus-4-8');
+  assert.equal(pricingModel(t, undefined, 'gemini-4-argon'), 'gemini-4-argon');
 });
 
 test('computeCost: model lạ dùng giá cao nhất (không đánh giá thấp chi phí)', () => {
@@ -119,7 +134,7 @@ test('backoffDelay tăng theo cấp số nhân và bị chặn trên', () => {
 });
 
 // ---------------------------------------------------------------- providers
-const cfg = loadConfig({ OPENAI_API_KEY: 'k1', ANTHROPIC_API_KEY: 'k2', META_API_KEY: 'k3' });
+const cfg = loadConfig({ OPENAI_API_KEY: 'k1', ANTHROPIC_API_KEY: 'k2', GEMINI_API_KEY: 'k3' });
 
 test('OpenAI Responses request đúng schema', () => {
   const r = buildResponsesRequest(cfg.providers.openai, { system: 'S', prompt: 'P', maxOutputTokens: 100 });
@@ -173,15 +188,31 @@ test('Anthropic response: bỏ qua thinking block, cộng cache vào input, refu
   assert.equal(parseAnthropicResponse('Claude', { model: 'claude-opus-4-8', stop_reason: 'end_turn', content: [{ type: 'text', text: 'x' }], usage: {} }).model, 'claude-opus-4-8');
 });
 
-test('Meta: mặc định Responses API tại api.meta.ai, tùy chọn chat', () => {
-  const r = ADAPTERS.meta.build(cfg.providers.meta, { system: 'S', prompt: 'P', maxOutputTokens: 5 });
-  assert.equal(r.url, 'https://api.meta.ai/v1/responses');
-  assert.equal(r.body.model, 'muse-wonder-1.0');
-  const c = buildChatRequest({ ...cfg.providers.meta, apiStyle: 'chat' }, { system: 'S', prompt: 'P', maxOutputTokens: 5 });
-  assert.equal(c.url, 'https://api.meta.ai/v1/chat/completions');
-  const parsed = parseChatResponse('Muse', { model: 'm', choices: [{ message: { content: 'hi' }, finish_reason: 'stop' }], usage: { prompt_tokens: 3, completion_tokens: 2 } });
-  assert.equal(parsed.text, 'hi');
-  assert.equal(ADAPTERS.meta.parse('Muse', { choices: [{ message: { content: 'x' } }] }).text, 'x');
+test('Gemini request: generateContent, x-goog-api-key, systemInstruction, thinkingLevel, JSON cho trọng tài', () => {
+  const r = ADAPTERS.gemini.build(cfg.providers.gemini, { system: 'S', prompt: 'P', maxOutputTokens: 500, json: true });
+  assert.equal(r.url, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-4-argon:generateContent');
+  assert.deepEqual(r.headers, { 'x-goog-api-key': 'k3' });
+  assert.deepEqual(r.body, {
+    systemInstruction: { parts: [{ text: 'S' }] },
+    contents: [{ role: 'user', parts: [{ text: 'P' }] }],
+    generationConfig: { maxOutputTokens: 500, thinkingConfig: { thinkingLevel: 'high' }, responseMimeType: 'application/json' },
+  });
+  assert.ok(!('responseMimeType' in buildGeminiRequest(cfg.providers.gemini, { system: 'S', prompt: 'P', maxOutputTokens: 5 }).body.generationConfig));
+});
+
+test('Gemini response: bỏ phần thought, token suy luận tính vào output', () => {
+  const out = parseGeminiResponse('Gemini', {
+    modelVersion: 'gemini-4-argon',
+    candidates: [{ finishReason: 'STOP', content: { parts: [{ text: 'nghĩ…', thought: true }, { text: '{"a":' }, { text: '1}' }] } }],
+    usageMetadata: { promptTokenCount: 100, cachedContentTokenCount: 20, candidatesTokenCount: 30, thoughtsTokenCount: 70 },
+  });
+  assert.equal(out.text, '{"a":1}');
+  assert.deepEqual(out.usage, { inputTokens: 100, cachedInputTokens: 20, cacheWriteTokens: 0, outputTokens: 100, reasoningTokens: 70 });
+  assert.throws(() => parseGeminiResponse('Gemini', { promptFeedback: { blockReason: 'SAFETY' } }), (e) => e.code === 'refusal');
+  assert.throws(() => parseGeminiResponse('Gemini', { candidates: [{ finishReason: 'SAFETY', content: { parts: [] } }] }), (e) => e.code === 'refusal');
+  assert.throws(() => parseGeminiResponse('Gemini', { candidates: [{ finishReason: 'MAX_TOKENS', content: { parts: [{ text: 'x', thought: true }] } }] }), (e) => e.code === 'truncated');
+  // thiếu thoughtsTokenCount (model bỏ qua suy luận) -> 0
+  assert.equal(parseGeminiResponse('Gemini', { candidates: [{ content: { parts: [{ text: 'ok' }] } }], usageMetadata: { candidatesTokenCount: 2 } }).usage.reasoningTokens, 0);
 });
 
 // ---------------------------------------------------------------- config & validation
@@ -204,8 +235,8 @@ test('mặc định model ID đúng yêu cầu', () => {
   const c = loadConfig({});
   assert.equal(c.providers.openai.model, 'gpt-6-sol');
   assert.equal(c.providers.anthropic.model, 'claude-opus-5-5');
-  assert.equal(c.providers.meta.model, 'muse-wonder-1.0');
-  assert.deepEqual(c.roles, { A: 'openai', B: 'anthropic', judge: 'meta' });
+  assert.equal(c.providers.gemini.model, 'gemini-4-argon');
+  assert.deepEqual(c.roles, { A: 'openai', B: 'anthropic', judge: 'gemini' });
 });
 
 test('validateDebateInput', () => {

@@ -29,11 +29,11 @@ export const N = {
   r3c: 'Vòng 3: GPT & Claude hoàn thiện',
   r3k: 'Vòng 3: Kiểm tra kết quả',
   jb: 'Trọng tài: Soạn hồ sơ',
-  jc: 'Trọng tài: Muse đánh giá',
+  jc: 'Trọng tài: Gemini đánh giá',
   jp: 'Trọng tài: Đọc phán quyết',
   jif: 'JSON hợp lệ?',
   jrb: 'Trọng tài: Yêu cầu sửa JSON',
-  jrc: 'Trọng tài: Muse sửa JSON',
+  jrc: 'Trọng tài: Gemini sửa JSON',
   jp2: 'Trọng tài: Đọc phán quyết (lần 2)',
   report: 'Lập báo cáo tiếng Việt',
   save: 'Lưu báo cáo',
@@ -116,7 +116,7 @@ export function buildMainWorkflow() {
     llmNode(N.r3c, [2200, y], 'Mỗi bên hoàn thiện phương án'),
     codeNode(N.r3k, 'r3_collect.js', [2420, y]),
     codeNode(N.jb, 'judge_build.js', [2640, y]),
-    llmNode(N.jc, [2860, y], 'Meta Muse Wonder chấm điểm "mù"'),
+    llmNode(N.jc, [2860, y], 'Gemini chấm điểm "mù" (JSON)'),
     codeNode(N.jp, 'judge_parse.js', [3080, y]),
     {
       id: uuid(N.jif), name: N.jif, type: 'n8n-nodes-base.if', typeVersion: 2.2, position: [3300, y],
@@ -160,7 +160,7 @@ export function buildMainWorkflow() {
   connections[N.token].main[1] ||= [];
   return {
     id: MAIN_WORKFLOW_ID,
-    name: 'AI Debate — GPT vs Claude, trọng tài Muse',
+    name: 'AI Debate — GPT vs Claude, trọng tài Gemini',
     active: false,
     isArchived: false,
     nodes,

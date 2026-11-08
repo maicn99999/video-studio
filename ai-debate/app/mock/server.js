@@ -1,5 +1,5 @@
 // MOCK LLM SERVER — chỉ dùng để chạy thử/kiểm thử khi chưa có API key thật.
-// Mô phỏng: OpenAI Responses API, Anthropic Messages API, Meta Model API (Responses + Chat Completions).
+// Mô phỏng: OpenAI Responses API, Anthropic Messages API, Google Gemini API (generateContent).
 // Kiểm tra header/schema giống API thật để phát hiện lỗi định dạng request của gateway.
 //
 // Chèn lỗi bằng cách đặt "thẻ" trong nội dung vấn đề:
@@ -157,19 +157,35 @@ async function handleResponses(req, res, provider) {
   send(res, 200, responsesShape(b.model, text, tok(system + prompt)));
 }
 
-async function handleChat(req, res, provider) {
-  if (!bearer(req)) return send(res, 401, { error: { message: 'Missing bearer token' } });
+async function handleGemini(req, res, model) {
+  if (!req.headers['x-goog-api-key']) return send(res, 403, { error: { code: 403, status: 'PERMISSION_DENIED', message: 'Method doesn\'t allow unregistered callers. Please use API Key.' } });
   const b = await readBody(req);
-  if (!Array.isArray(b.messages) || typeof b.model !== 'string') return send(res, 400, { error: { message: 'model/messages required' } });
-  const system = b.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n');
-  const prompt = b.messages.filter((m) => m.role === 'user').map((m) => m.content).join('\n');
-  const key = `${provider}chat:${crypto.createHash('sha1').update(JSON.stringify(b)).digest('hex')}`;
-  if (await faults(res, key, system + prompt, provider)) return;
-  const text = generate(provider, system, prompt);
+  const errs = [];
+  if (!Array.isArray(b.contents) || !b.contents.length) errs.push('contents is required');
+  for (const c of b.contents || []) if (!Array.isArray(c.parts)) errs.push('contents[].parts is required');
+  if (b.systemInstruction && !Array.isArray(b.systemInstruction.parts)) errs.push('systemInstruction.parts');
+  const gc = b.generationConfig || {};
+  if (gc.maxOutputTokens !== undefined && !Number.isInteger(gc.maxOutputTokens)) errs.push('generationConfig.maxOutputTokens');
+  const tc = gc.thinkingConfig;
+  if (tc) {
+    if (tc.thinkingLevel && tc.thinkingBudget !== undefined) errs.push('thinkingLevel và thinkingBudget không được dùng cùng lúc');
+    if (tc.thinkingLevel && !['minimal', 'low', 'medium', 'high'].includes(String(tc.thinkingLevel).toLowerCase())) errs.push('thinkingConfig.thinkingLevel');
+    if (/gemini-4/.test(model) && tc.thinkingBudget !== undefined) errs.push('thinkingBudget không hỗ trợ trên Gemini 4');
+  }
+  if (gc.responseMimeType && !['text/plain', 'application/json'].includes(gc.responseMimeType)) errs.push('responseMimeType');
+  if (errs.length) return send(res, 400, { error: { code: 400, status: 'INVALID_ARGUMENT', message: errs.join('; ') } });
+  const prompt = b.contents.flatMap((c) => c.parts.map((x) => x.text || '')).join('\n');
+  const system = (b.systemInstruction?.parts || []).map((x) => x.text || '').join('\n');
+  const key = `gemini:${crypto.createHash('sha1').update(JSON.stringify(b)).digest('hex')}`;
+  if (await faults(res, key, system + prompt, 'gemini')) return;
+  let text = generate('gemini', system, prompt);
+  // Với responseMimeType=application/json, Gemini thật trả JSON thuần (không có chữ thừa).
+  const thoughts = 150;
   send(res, 200, {
-    id: `chatcmpl-${crypto.randomUUID()}`, object: 'chat.completion', model: b.model,
-    choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
-    usage: { prompt_tokens: tok(system + prompt), completion_tokens: tok(text), total_tokens: tok(system + prompt) + tok(text) },
+    candidates: [{ content: { role: 'model', parts: [{ text: '[mock] tóm tắt suy luận', thought: true }, { text }] }, finishReason: 'STOP', index: 0 }],
+    usageMetadata: { promptTokenCount: tok(system + prompt), candidatesTokenCount: tok(text), thoughtsTokenCount: thoughts, totalTokenCount: tok(system + prompt) + tok(text) + thoughts },
+    modelVersion: model,
+    responseId: crypto.randomUUID(),
   });
 }
 
@@ -216,8 +232,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url === '/__mock/reset') { attempts.clear(); stats.requests = 0; stats.byEndpoint = {}; stats.statuses = {}; return send(res, 200, { ok: true }); }
     if (req.method !== 'POST') return send(res, 405, { error: { message: 'method not allowed' } });
     if (url === '/openai/v1/responses') return await handleResponses(req, res, 'openai');
-    if (url === '/meta/v1/responses') return await handleResponses(req, res, 'meta');
-    if (url === '/meta/v1/chat/completions') return await handleChat(req, res, 'meta');
+    const gm = url.match(/^\/gemini\/v1beta\/models\/([^/:]+):generateContent$/);
+    if (gm) return await handleGemini(req, res, decodeURIComponent(gm[1]));
     if (url === '/anthropic/v1/messages') return await handleAnthropic(req, res);
     send(res, 404, { error: { message: `unknown endpoint ${url}` } });
   } catch (e) {

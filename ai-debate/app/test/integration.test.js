@@ -1,5 +1,5 @@
 // Kiểm thử tích hợp: app thật (HTTP) + gateway + MOCK LLM server + workflow JSON thật (chạy bằng mini-n8n).
-// LƯU Ý: đây là mock — KHÔNG gọi API OpenAI/Anthropic/Meta thật.
+// LƯU Ý: đây là mock — KHÔNG gọi API OpenAI/Anthropic/Google thật.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -26,7 +26,7 @@ test('luồng đầy đủ: 3 vòng + trọng tài + báo cáo, token & chi phí
   // 7 lượt gọi: 3 vòng × 2 + trọng tài
   const ok = d.turns.filter((t) => t.status === 'ok');
   assert.equal(ok.length, 7);
-  for (const [round, role, model] of [[1, 'A', 'gpt-6-sol'], [1, 'B', 'claude-opus-5-5'], [2, 'A', 'gpt-6-sol'], [2, 'B', 'claude-opus-5-5'], [3, 'A', 'gpt-6-sol'], [3, 'B', 'claude-opus-5-5'], [4, 'judge', 'muse-wonder-1.0']]) {
+  for (const [round, role, model] of [[1, 'A', 'gpt-6-sol'], [1, 'B', 'claude-opus-5-5'], [2, 'A', 'gpt-6-sol'], [2, 'B', 'claude-opus-5-5'], [3, 'A', 'gpt-6-sol'], [3, 'B', 'claude-opus-5-5'], [4, 'judge', 'gemini-4-argon']]) {
     const t = ok.find((x) => x.round === round && x.role === role);
     assert.ok(t, `thiếu lượt ${round}/${role}`);
     assert.equal(t.model, model);
@@ -44,7 +44,7 @@ test('luồng đầy đủ: 3 vòng + trọng tài + báo cáo, token & chi phí
   const st = await mockStats();
   assert.equal(st.byEndpoint['/openai/v1/responses'], 3);
   assert.equal(st.byEndpoint['/anthropic/v1/messages'], 3);
-  assert.equal(st.byEndpoint['/meta/v1/responses'], 1);
+  assert.equal(st.byEndpoint['/gemini/v1beta/models/gemini-4-argon:generateContent'], 1);
 });
 
 test('Vòng 1 độc lập: prompt của mỗi bên không chứa phương án đối phương; Vòng 2 có', async () => {
@@ -88,7 +88,7 @@ test('timeout: request treo bị cắt và retry thành công', async () => {
 test('JSON trọng tài hỏng -> nhánh "sửa JSON" chạy và báo cáo vẫn đầy đủ', async () => {
   const { d, result } = await runDebate(S, sampleInput('[mock:badjson]'));
   assert.equal(d.status, 'completed', d.error);
-  assert.ok(result.executed.includes('Trọng tài: Muse sửa JSON'));
+  assert.ok(result.executed.includes('Trọng tài: Gemini sửa JSON'));
   assert.ok(d.turns.some((t) => t.round === 5 && t.role === 'judge' && t.status === 'ok'));
   assert.equal(d.judge.valid, true);
   assert.match(d.report_md, /4b/);
@@ -168,11 +168,11 @@ test('hủy phiên: gateway từ chối lượt tiếp theo', async () => {
 });
 
 test('thiếu API key -> không cho tạo phiên', async () => {
-  const s2 = await startStack({ META_API_KEY: '' });
+  const s2 = await startStack({ GEMINI_API_KEY: '' });
   try {
     const r = await s2.call('/api/debates', { method: 'POST', body: sampleInput() });
     assert.equal(r.status, 400);
-    assert.match(r.body.error, /META_API_KEY/);
+    assert.match(r.body.error, /GEMINI_API_KEY/);
   } finally { await s2.close(); }
 });
 
@@ -201,7 +201,7 @@ test('lịch sử, tìm kiếm, xuất Markdown, chi phí, xóa', async () => {
   assert.match(text, /Vòng 2 — Phản biện chéo/);
   const usage = (await S.call('/api/usage')).body;
   assert.ok(usage.today.total > 0);
-  assert.deepEqual(new Set(usage.all.byModel.map((r) => r.model)), new Set(['gpt-6-sol', 'claude-opus-5-5', 'muse-wonder-1.0']));
+  assert.deepEqual(new Set(usage.all.byModel.map((r) => r.model)), new Set(['gpt-6-sol', 'claude-opus-5-5', 'gemini-4-argon']));
   assert.equal((await S.call(`/api/debates/${id}`, { method: 'DELETE' })).status, 200);
   assert.equal((await S.call(`/api/debates/${id}`)).status, 404);
 });
